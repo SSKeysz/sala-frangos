@@ -594,6 +594,14 @@
 const SIGNALING_SERVER_URL = "https://sinalizacao-frangos.onrender.com";
 // ============================
 
+// ===== WebRTC + Sinalização =====
+let socket;
+const peers = {};       // socketId -> RTCPeerConnection
+const nomesRemotos = {}; // socketId -> nome
+let streamLocal = null;
+
+const configIce = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+  
 const params = new URLSearchParams(window.location.search);
 let salaId = params.get("sala");
 if (!salaId) {
@@ -714,13 +722,7 @@ function confirmarNome() {
   iniciarComNome(valor);
 }
 
-// ===== WebRTC + Sinalização =====
-let socket;
-const peers = {};       // socketId -> RTCPeerConnection
-const nomesRemotos = {}; // socketId -> nome
-let streamLocal = null;
 
-const configIce = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
 function conectarSocket() {
   socket = io(SIGNALING_SERVER_URL);
