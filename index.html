@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Central de Transmissão</title>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap');
 
@@ -1427,7 +1427,12 @@ atualizarVazio();
 // ============================================================
 const SUPABASE_URL = "https://wqgcbpodliqckctsibfn.supabase.co";
 const SUPABASE_KEY = "sb_publishable_q8zsIhKsTEfc4MtEGb5lrA_nUkZDdNH";
-const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+let sb = null;
+try {
+  sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+} catch (e) {
+  console.error("Painel admin: falha ao carregar Supabase.", e);
+}
 
 let configGlobalAtual = { permitir_mutar_sons: true, gravacao_ativa: false };
 let souAdminAgora = false;
@@ -1436,6 +1441,7 @@ let souAdminAgora = false;
 let registroSessaoAtual = null;
 
 async function registrarInicioTransmissao() {
+  if (!sb) return;
   const agora = new Date().toISOString();
   try {
     const { data, error } = await sb.from("historico_transmissoes").insert({
@@ -1449,7 +1455,7 @@ async function registrarInicioTransmissao() {
 }
 
 async function registrarFimTransmissao() {
-  if (!registroSessaoAtual) return;
+  if (!sb || !registroSessaoAtual) return;
   const agora = new Date();
   const inicio = new Date(registroSessaoAtual.iniciado_em);
   const duracao = Math.round((agora - inicio) / 1000);
@@ -1464,6 +1470,7 @@ async function registrarFimTransmissao() {
 
 // ----- Configurações globais em tempo real (todo visitante escuta) -----
 async function carregarConfigGlobalInicial() {
+  if (!sb) return;
   try {
     const { data } = await sb.from("configuracoes_globais").select("*").eq("id", 1).single();
     if (data) {
@@ -1492,20 +1499,24 @@ function aplicarConfigGlobal(cfg) {
 
 carregarConfigGlobalInicial();
 
-sb.channel("config-global-realtime")
-  .on("postgres_changes", { event: "UPDATE", schema: "public", table: "configuracoes_globais" }, (payload) => {
-    aplicarConfigGlobal(payload.new);
-  })
-  .subscribe();
+if (sb) {
+  sb.channel("config-global-realtime")
+    .on("postgres_changes", { event: "UPDATE", schema: "public", table: "configuracoes_globais" }, (payload) => {
+      aplicarConfigGlobal(payload.new);
+    })
+    .subscribe();
+}
 
 // ----- Comandos do admin em tempo real (avisos, sons, "zoeiras") -----
 let audioForcadoAtual = null;
 
-sb.channel("comandos-admin-realtime")
-  .on("postgres_changes", { event: "INSERT", schema: "public", table: "comandos_admin" }, (payload) => {
-    tratarComandoAdmin(payload.new);
-  })
-  .subscribe();
+if (sb) {
+  sb.channel("comandos-admin-realtime")
+    .on("postgres_changes", { event: "INSERT", schema: "public", table: "comandos_admin" }, (payload) => {
+      tratarComandoAdmin(payload.new);
+    })
+    .subscribe();
+}
 
 function tratarComandoAdmin(cmd) {
   if (cmd.tipo === "aviso_global") {
@@ -1549,6 +1560,10 @@ const gravacaoAutorizadaPeloDono = () => configGlobalAtual.gravacao_ativa;
 
 // ----- Login admin (Discord OAuth + PIN) -----
 document.getElementById("btn-admin").addEventListener("click", () => {
+  if (!sb) {
+    alert("O painel admin não carregou corretamente (falha ao conectar com o Supabase). Tenta recarregar a página. Se persistir, abre o Console do navegador (F12) e me manda o erro em vermelho que aparecer.");
+    return;
+  }
   document.getElementById("modal-admin").classList.add("aberto");
   verificarEstadoLoginAdmin();
 });
