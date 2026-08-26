@@ -6,6 +6,7 @@
 <title>Central de Transmissão</title>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
+<script src="https://www.youtube.com/iframe_api"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap');
 
@@ -198,8 +199,23 @@
     font-family: var(--font-mono);
     font-size: 11px;
     color: var(--text-dim);
-    cursor: default;
+    cursor: pointer;
   }
+  .lista-espectadores {
+    position: absolute; top: 100%; right: 0; margin-top: 6px;
+    background: var(--panel-raised);
+    border: 1px solid var(--line-strong);
+    border-radius: 4px;
+    padding: 8px 10px;
+    min-width: 130px; max-width: 220px;
+    font-size: 11px; line-height: 1.7;
+    color: var(--text-dim);
+    text-align: left;
+    display: none;
+    z-index: 30;
+  }
+  .contador-assistindo:hover .lista-espectadores,
+  .contador-assistindo.aberto .lista-espectadores { display: block; }
 
   .aviso-audio {
     position: absolute; inset: 0;
@@ -517,6 +533,24 @@
   #widget-som-ativo.visivel { display: flex; }
   #widget-som-ativo input[type="range"] { width: 100px; }
 
+  #widget-youtube-ativo {
+    position: fixed; bottom: 20px; left: 20px;
+    background: var(--panel); border: 1px solid var(--line-strong);
+    border-radius: 6px; padding: 10px; width: 320px;
+    display: none; z-index: 120;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+  }
+  #widget-youtube-ativo.visivel { display: block; }
+  #widget-youtube-ativo .cabecalho-yt {
+    display: flex; justify-content: space-between; align-items: center;
+    margin-bottom: 8px; font-size: 11px; color: var(--text-dim); font-family: var(--font-mono);
+  }
+  #widget-youtube-ativo .cabecalho-yt button {
+    background: none; border: none; color: var(--text-faint); cursor: pointer; font-size: 14px;
+  }
+  #player-youtube-container { width: 100%; aspect-ratio: 16/9; background: #000; border-radius: 4px; overflow: hidden; }
+  #player-youtube-container iframe { width: 100%; height: 100%; }
+
   .monitor .rotulo {
     padding: 10px 14px;
     font-size: 13px;
@@ -772,6 +806,15 @@
       </div>
 
       <div class="secao-admin">
+        <h3>📺 Assistir YouTube junto</h3>
+        <div class="linha">
+          <input type="text" id="input-link-youtube" placeholder="Cola o link do YouTube aqui">
+          <button class="btn-admin-acao" id="btn-tocar-youtube">Tocar pra todos</button>
+        </div>
+        <button class="btn-admin-acao" id="btn-parar-youtube" style="margin-top:10px; background:transparent; border:1px solid var(--tally); color:var(--tally);">⏹ Parar vídeo (todos)</button>
+      </div>
+
+      <div class="secao-admin">
         <h3>🎭 Controles de zoeira</h3>
         <button class="btn-admin-acao" id="btn-parar-tudo">Encerrar todas as transmissões ativas agora</button>
       </div>
@@ -800,7 +843,7 @@
     <p class="sub">Só você vê essa lista — cada gravação aqui é vinculada a este navegador.</p>
 
     <div id="minhas-gravacoes-desativado" style="display:none;">
-
+      <p class="sub" style="line-height:1.5;">O dono do site desativou o acesso às próprias gravações no momento. Fala com ele se precisar de alguma.</p>
     </div>
     <div id="minhas-gravacoes-vazio" style="display:none;">
       <p class="sub" style="line-height:1.5;">Nenhuma gravação sua ainda. Elas aparecem aqui depois que você transmite com a gravação de segurança ativa.</p>
@@ -813,6 +856,14 @@
   <span id="nome-som-tocando">🎵 Som</span>
   <input type="range" id="volume-som-forcado" min="0" max="100" value="100">
   <span id="valor-volume-som">100%</span>
+</div>
+
+<div id="widget-youtube-ativo">
+  <div class="cabecalho-yt">
+    <span>📺 Assistindo junto</span>
+    <button id="btn-fechar-youtube" title="Fechar só pra mim">✕</button>
+  </div>
+  <div id="player-youtube-container"></div>
 </div>
 
 <div id="painel-tema" class="painel-flutuante">
@@ -830,6 +881,7 @@
 
 <div class="barra">
   <button class="btn btn-transmitir" id="btn-compartilhar">▲ Transmitir minha tela</button>
+  <button class="btn" id="btn-camera" style="background:var(--panel-raised); border:1px solid var(--line-strong); color:var(--text);">📷 Mostrar câmera</button>
   <button class="btn btn-parar" id="btn-parar" disabled>■ Encerrar transmissão</button>
   <button class="btn btn-link" id="btn-copiar">⧉ Copiar link do canal</button>
 </div>
@@ -1158,22 +1210,47 @@ document.getElementById("btn-compartilhar").addEventListener("click", async () =
   }
   if (trackVideo) trackVideo.contentHint = fpsAlvo >= 60 ? "motion" : "detail";
 
+  await iniciarTransmissaoComStream(streamLocal);
+});
+
+document.getElementById("btn-camera").addEventListener("click", async () => {
+  let streamCamera;
+  try {
+    // Áudio desligado por padrão: como todo mundo já está na call de voz do
+    // Discord, ligar o microfone aqui também ia duplicar o próprio áudio.
+    streamCamera = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+  } catch (e) {
+    if (e.name === "NotAllowedError") {
+      alert("Permissão da câmera negada. Você pode liberar o acesso clicando no ícone de câmera/cadeado ao lado do endereço do site.");
+    } else if (e.name === "NotFoundError") {
+      alert("Não encontrei nenhuma câmera disponível neste dispositivo.");
+    } else {
+      alert("Não foi possível ligar a câmera: " + e.message);
+    }
+    return;
+  }
+  streamLocal = streamCamera;
+  await iniciarTransmissaoComStream(streamLocal);
+});
+
+async function iniciarTransmissaoComStream(stream) {
   document.getElementById("sel-resolucao").disabled = true;
   document.getElementById("sel-fps").disabled = true;
 
-  mostrarMonitorLocal(streamLocal);
+  mostrarMonitorLocal(stream);
   await registrarInicioTransmissao();
-  iniciarGravacaoSeAtivo(streamLocal, "local");
+  iniciarGravacaoSeAtivo(stream, "local");
 
   Object.values(peers).forEach((pc) => {
-    streamLocal.getTracks().forEach((track) => pc.addTrack(track, streamLocal));
+    stream.getTracks().forEach((track) => pc.addTrack(track, stream));
   });
 
   document.getElementById("btn-compartilhar").disabled = true;
+  document.getElementById("btn-camera").disabled = true;
   document.getElementById("btn-parar").disabled = false;
 
-  streamLocal.getVideoTracks()[0].addEventListener("ended", pararCompartilhamento);
-});
+  stream.getVideoTracks()[0].addEventListener("ended", pararCompartilhamento);
+}
 
 document.getElementById("btn-parar").addEventListener("click", pararCompartilhamento);
 
@@ -1187,6 +1264,7 @@ function pararCompartilhamento() {
   if (socket) socket.emit("parou-de-compartilhar");
   removerMonitor("local");
   document.getElementById("btn-compartilhar").disabled = false;
+  document.getElementById("btn-camera").disabled = false;
   document.getElementById("btn-parar").disabled = true;
   document.getElementById("sel-resolucao").disabled = false;
   document.getElementById("sel-fps").disabled = false;
@@ -1201,7 +1279,7 @@ function mostrarMonitorLocal(stream) {
     card.innerHTML = `
       <div class="tela">
         <span class="tally-ao-vivo"><span class="luz"></span>AO VIVO</span>
-        <span class="contador-assistindo" id="contador-local">👁 0</span>
+        <span class="contador-assistindo" id="contador-local">👁 0<span class="lista-espectadores" id="lista-espectadores-local"></span></span>
         <span class="ponto-gravacao" id="ponto-gravacao-local"></span>
         <video autoplay muted playsinline></video>
         <div class="acoes-monitor">
@@ -1229,7 +1307,7 @@ function mostrarMonitorRemoto(id, stream) {
     card.innerHTML = `
       <div class="tela">
         <span class="tally-ao-vivo"><span class="luz"></span>AO VIVO</span>
-        <span class="contador-assistindo" id="contador-${id}">👁 0</span>
+        <span class="contador-assistindo" id="contador-${id}">👁 0<span class="lista-espectadores" id="lista-espectadores-${id}"></span></span>
         <span class="ponto-gravacao" id="ponto-gravacao-${id}"></span>
         <video autoplay playsinline></video>
         <div class="acoes-monitor">
@@ -1506,12 +1584,25 @@ function atualizarContadoresAssistindo() {
 
     const espectadores = listaNomes.filter((n) => n !== nomeDoTransmissor);
     const badge = document.getElementById("contador-" + idAlvo);
-    if (badge) {
-      badge.textContent = "👁 " + espectadores.length;
-      badge.title = espectadores.length > 0 ? "Assistindo: " + espectadores.join(", ") : "Ninguém assistindo ainda";
+    const listaEl = document.getElementById("lista-espectadores-" + idAlvo);
+    if (badge && badge.firstChild) badge.firstChild.nodeValue = "👁 " + espectadores.length;
+    if (listaEl) {
+      listaEl.innerHTML = espectadores.length > 0
+        ? espectadores.map((n) => `<div>${escapeHtml(n)}</div>`).join("")
+        : `<div>Ninguém assistindo ainda</div>`;
     }
   });
 }
+
+// Toque no contador (celular) abre/fecha a lista; hover já cobre o desktop via CSS.
+// Clicar em qualquer outro lugar fecha a lista aberta.
+document.addEventListener("click", (e) => {
+  const badgeClicado = e.target.closest(".contador-assistindo");
+  document.querySelectorAll(".contador-assistindo.aberto").forEach((b) => {
+    if (b !== badgeClicado) b.classList.remove("aberto");
+  });
+  if (badgeClicado) badgeClicado.classList.toggle("aberto");
+});
 
 // ===== Indicador sutil de qualidade da conexão =====
 setInterval(async () => {
@@ -1747,6 +1838,14 @@ function tratarComandoAdmin(cmd) {
 
   if (cmd.tipo === "parar_transmissoes") {
     if (streamLocal) pararCompartilhamento();
+  }
+
+  if (cmd.tipo === "tocar_youtube") {
+    tocarVideoYoutubeSincronizado(cmd.payload.videoId, cmd.payload.comeco_em);
+  }
+
+  if (cmd.tipo === "parar_youtube") {
+    pararVideoYoutube();
   }
 }
 
@@ -2020,6 +2119,7 @@ async function carregarListaSons() {
       <div class="acoes-som">
         <button data-tocar="${som.id}">▶ Tocar pra todos</button>
         <button data-publico="${som.id}" data-atual="${som.publico}">${som.publico ? "Tornar privado" : "Tornar público"}</button>
+        <button data-remover="${som.id}" style="border-color:var(--tally); color:var(--tally);">🗑 Remover</button>
       </div>`;
     container.appendChild(linha);
   });
@@ -2041,6 +2141,27 @@ async function carregarListaSons() {
       const novoValor = btn.dataset.atual !== "true";
       const { error: erroTogglePublico } = await sb.from("sons_soundboard").update({ publico: novoValor }).eq("id", btn.dataset.publico);
       if (erroTogglePublico) { mostrarStatusAdmin("Erro: " + erroTogglePublico.message, true); return; }
+      carregarListaSons();
+    });
+  });
+
+  container.querySelectorAll("[data-remover]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const som = sons.find((s) => s.id === btn.dataset.remover);
+      if (!som) return;
+      if (!confirm(`Remover o som "${som.nome}" definitivamente?`)) return;
+
+      const partesUrl = som.arquivo_url.split("/public/sons/");
+      const caminhoArquivo = partesUrl[1] ? decodeURIComponent(partesUrl[1]) : null;
+      if (caminhoArquivo) {
+        const { error: erroRemoverArquivo } = await sb.storage.from("sons").remove([caminhoArquivo]);
+        if (erroRemoverArquivo) console.warn("Não consegui apagar o arquivo do armazenamento:", erroRemoverArquivo.message);
+      }
+
+      const { error: erroRemoverLinha } = await sb.from("sons_soundboard").delete().eq("id", som.id);
+      if (erroRemoverLinha) { mostrarStatusAdmin("Erro ao remover: " + erroRemoverLinha.message, true); return; }
+
+      mostrarStatusAdmin(`"${som.nome}" removido.`, false);
       carregarListaSons();
     });
   });
@@ -2182,6 +2303,78 @@ async function carregarMinhasGravacoes() {
     container.appendChild(div);
   });
 }
+
+// ----- "Assistir YouTube junto" (sincronizado via comandos_admin) -----
+let playerYoutube = null;
+let youtubeApiPronta = false;
+window.onYouTubeIframeAPIReady = () => { youtubeApiPronta = true; };
+
+function extrairYoutubeId(url) {
+  const regex = /(?:youtube\.com\/(?:watch\?v=|embed\/|shorts\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/;
+  const match = url.match(regex);
+  return match ? match[1] : null;
+}
+
+function tocarVideoYoutubeSincronizado(videoId, comecoEmIso) {
+  document.getElementById("widget-youtube-ativo").classList.add("visivel");
+  const segundosDecorridos = Math.max(0, (Date.now() - new Date(comecoEmIso).getTime()) / 1000);
+
+  const iniciar = () => {
+    if (playerYoutube && playerYoutube.loadVideoById) {
+      playerYoutube.loadVideoById(videoId, segundosDecorridos);
+    } else {
+      playerYoutube = new YT.Player("player-youtube-container", {
+        videoId,
+        playerVars: { autoplay: 1, start: Math.floor(segundosDecorridos) },
+        events: { onReady: (e) => e.target.playVideo() }
+      });
+    }
+  };
+
+  if (youtubeApiPronta && window.YT && window.YT.Player) {
+    iniciar();
+  } else {
+    const esperar = setInterval(() => {
+      if (window.YT && window.YT.Player) {
+        clearInterval(esperar);
+        youtubeApiPronta = true;
+        iniciar();
+      }
+    }, 300);
+  }
+}
+
+function pararVideoYoutube() {
+  document.getElementById("widget-youtube-ativo").classList.remove("visivel");
+  if (playerYoutube && playerYoutube.stopVideo) playerYoutube.stopVideo();
+}
+
+document.getElementById("btn-fechar-youtube").addEventListener("click", () => {
+  // Fecha só pro navegador de quem clicou — não afeta os outros participantes
+  document.getElementById("widget-youtube-ativo").classList.remove("visivel");
+  if (playerYoutube && playerYoutube.pauseVideo) playerYoutube.pauseVideo();
+});
+
+document.getElementById("btn-tocar-youtube").addEventListener("click", async () => {
+  const link = document.getElementById("input-link-youtube").value.trim();
+  const videoId = extrairYoutubeId(link);
+  if (!videoId) { mostrarStatusAdmin("Não reconheci esse link do YouTube.", true); return; }
+
+  // Pequena folga (1.5s) pra dar tempo de todo mundo receber o comando antes do vídeo começar de verdade
+  const comecoEm = new Date(Date.now() + 1500).toISOString();
+  const { error } = await sb.from("comandos_admin").insert({
+    tipo: "tocar_youtube",
+    payload: { videoId, comeco_em: comecoEm }
+  });
+  if (error) { mostrarStatusAdmin("Erro ao tocar vídeo: " + error.message, true); return; }
+  mostrarStatusAdmin("Vídeo tocando pra todos.", false);
+  document.getElementById("input-link-youtube").value = "";
+});
+
+document.getElementById("btn-parar-youtube").addEventListener("click", async () => {
+  const { error } = await sb.from("comandos_admin").insert({ tipo: "parar_youtube", payload: {} });
+  if (error) mostrarStatusAdmin("Erro ao parar vídeo: " + error.message, true);
+});
 </script>
 
 </body>
