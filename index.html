@@ -380,14 +380,48 @@
   /* ===== BANNER DE AVISO GLOBAL ===== */
   #banner-aviso-global {
     display: none;
-    background: var(--tally);
-    color: #1a0a08;
-    text-align: center;
-    padding: 10px 20px;
-    font-weight: 600;
-    font-size: 14px;
+    position: relative;
+    background: linear-gradient(180deg, var(--panel-raised), var(--panel));
+    border-bottom: 1px solid var(--tally);
+    padding: 12px 20px;
+    overflow: hidden;
   }
-  #banner-aviso-global.visivel { display: block; }
+  #banner-aviso-global.visivel { display: block; animation: banner-entrada .35s ease; }
+  @keyframes banner-entrada { from { transform: translateY(-100%); } to { transform: translateY(0); } }
+
+  .banner-conteudo {
+    display: flex; align-items: center; gap: 12px;
+    max-width: 900px; margin: 0 auto;
+  }
+  .banner-selo {
+    font-family: var(--font-mono);
+    font-size: 10px;
+    letter-spacing: 1.5px;
+    color: var(--tally);
+    background: rgba(255,77,61,0.12);
+    border: 1px solid var(--tally);
+    padding: 3px 8px;
+    border-radius: 3px;
+    white-space: nowrap;
+    flex-shrink: 0;
+  }
+  .banner-texto {
+    font-size: 14px;
+    color: var(--text);
+    flex: 1;
+  }
+  .banner-fechar {
+    background: none; border: none; color: var(--text-faint);
+    cursor: pointer; font-size: 16px; flex-shrink: 0;
+    padding: 2px 6px;
+  }
+  .banner-fechar:hover { color: var(--text); }
+  .banner-barra-tempo {
+    position: absolute; bottom: 0; left: 0; height: 2px;
+    background: var(--tally);
+    width: 100%;
+    transform-origin: left;
+  }
 
   /* ===== PAINEL ADMIN ===== */
   #modal-admin {
@@ -691,7 +725,12 @@
           <span>Gravar transmissões (indicador discreto e visível)</span>
           <input type="checkbox" id="toggle-gravacao-global">
         </div>
+        <p class="sub" id="status-gravacao-texto" style="margin:6px 0 4px;">Carregando status...</p>
+        <p class="sub" style="margin:4px 0 12px; line-height:1.5;">
+          ⚠️ Importante: a gravação acontece automaticamente no <b>navegador de quem estiver transmitindo</b> a tela (não neste painel). O vídeo só aparece aqui embaixo se você mesmo for a pessoa que transmitiu, no mesmo navegador e aba onde compartilhou a tela.
+        </p>
         <div id="area-player-gravacao" style="margin-top: 12px; display: none;">
+          <p class="sub" style="color:var(--signal);">✅ Uma gravação foi feita nesta sessão:</p>
           <video id="player-preview-gravacao" controls style="width: 100%; max-height: 220px; border-radius: 4px; background: #000;"></video>
           <a id="btn-baixar-gravacao" download="gravacao_transmissao.webm" class="btn-admin-acao" style="display: inline-block; margin-top: 8px; text-decoration: none; text-align: center;">💾 Baixar vídeo gravado</a>
         </div>
@@ -714,6 +753,7 @@
           <button class="btn-admin-acao" id="btn-subir-som">Enviar</button>
         </div>
         <div id="lista-sons"></div>
+        <button class="btn-admin-acao" id="btn-parar-som" style="margin-top:10px; background:transparent; border:1px solid var(--tally); color:var(--tally);">⏹ Parar som atual (todos)</button>
       </div>
 
       <div class="secao-admin">
@@ -1586,26 +1626,49 @@ if (sb) {
 function tratarComandoAdmin(cmd) {
   if (cmd.tipo === "aviso_global") {
     const banner = document.getElementById("banner-aviso-global");
-    banner.textContent = "📢 " + cmd.payload.mensagem;
-    banner.classList.add("visivel");
     const duracaoMs = (cmd.payload.duracao_segundos || 15) * 1000;
-    setTimeout(() => banner.classList.remove("visivel"), duracaoMs);
+    banner.innerHTML = `
+      <div class="banner-conteudo">
+        <span class="banner-selo">📢 AVISO</span>
+        <span class="banner-texto">${escapeHtml(cmd.payload.mensagem)}</span>
+        <button class="banner-fechar" id="fechar-banner-aviso">✕</button>
+      </div>
+      <div class="banner-barra-tempo" id="barra-tempo-banner"></div>`;
+    banner.classList.add("visivel");
+
+    const barra = document.getElementById("barra-tempo-banner");
+    barra.style.transition = `transform ${duracaoMs}ms linear`;
+    requestAnimationFrame(() => { barra.style.transform = "scaleX(0)"; });
+
+    const fechar = () => banner.classList.remove("visivel");
+    document.getElementById("fechar-banner-aviso").addEventListener("click", fechar);
+    setTimeout(fechar, duracaoMs);
   }
 
   if (cmd.tipo === "tocar_som") {
     if (audioForcadoAtual) audioForcadoAtual.pause();
     audioForcadoAtual = new Audio(cmd.payload.url);
-    audioForcadoAtual.loop = true;
+    audioForcadoAtual.loop = !!cmd.payload.loop;
     audioForcadoAtual.volume = 1;
     audioForcadoAtual.play().catch((e) => console.error("Não consegui tocar o som:", e));
 
     const widget = document.getElementById("widget-som-ativo");
-    document.getElementById("nome-som-tocando").textContent = "🎵 " + cmd.payload.nome;
+    document.getElementById("nome-som-tocando").textContent = "🎵 " + cmd.payload.nome + (cmd.payload.loop ? " (loop)" : "");
     const slider = document.getElementById("volume-som-forcado");
     slider.min = configGlobalAtual.permitir_mutar_sons ? "0" : "50";
     slider.value = "100";
     document.getElementById("valor-volume-som").textContent = "100%";
     widget.classList.add("visivel");
+
+    // Se não é loop, some o widget sozinho quando a música acabar
+    if (!cmd.payload.loop) {
+      audioForcadoAtual.addEventListener("ended", () => widget.classList.remove("visivel"));
+    }
+  }
+
+  if (cmd.tipo === "parar_som") {
+    if (audioForcadoAtual) { audioForcadoAtual.pause(); audioForcadoAtual = null; }
+    document.getElementById("widget-som-ativo").classList.remove("visivel");
   }
 
   if (cmd.tipo === "parar_transmissoes") {
@@ -1746,9 +1809,21 @@ async function abrirPainelCompleto() {
 
   document.getElementById("toggle-gravacao-global").checked = !!configGlobalAtual.gravacao_ativa;
   document.getElementById("toggle-permitir-mutar").checked = !!configGlobalAtual.permitir_mutar_sons;
+  atualizarTextoStatusGravacao();
 
   carregarListaSons();
   carregarHistorico();
+}
+
+function atualizarTextoStatusGravacao() {
+  const texto = document.getElementById("status-gravacao-texto");
+  if (configGlobalAtual.gravacao_ativa) {
+    texto.textContent = "🔴 Status: LIGADA — quem transmitir agora será gravado.";
+    texto.style.color = "var(--tally)";
+  } else {
+    texto.textContent = "⚪ Status: desligada.";
+    texto.style.color = "var(--text-faint)";
+  }
 }
 
 // ----- Ações do painel -----
@@ -1769,8 +1844,16 @@ document.getElementById("btn-enviar-aviso").addEventListener("click", async () =
 
 document.getElementById("toggle-gravacao-global").addEventListener("change", async (e) => {
   const { error } = await sb.from("configuracoes_globais").update({ gravacao_ativa: e.target.checked }).eq("id", 1);
-  if (error) { mostrarStatusAdmin("Erro ao atualizar gravação: " + error.message, true); e.target.checked = !e.target.checked; }
+  if (error) {
+    mostrarStatusAdmin("Erro ao atualizar gravação: " + error.message, true);
+    e.target.checked = !e.target.checked;
+    return;
+  }
+  configGlobalAtual.gravacao_ativa = e.target.checked;
+  atualizarTextoStatusGravacao();
+  mostrarStatusAdmin(e.target.checked ? "Gravação ativada." : "Gravação desativada.", false);
 });
+
 
 document.getElementById("toggle-permitir-mutar").addEventListener("change", async (e) => {
   const { error } = await sb.from("configuracoes_globais").update({ permitir_mutar_sons: e.target.checked }).eq("id", 1);
@@ -1781,6 +1864,12 @@ document.getElementById("btn-parar-tudo").addEventListener("click", async () => 
   const { error } = await sb.from("comandos_admin").insert({ tipo: "parar_transmissoes", payload: {} });
   if (error) { mostrarStatusAdmin("Erro ao encerrar transmissões: " + error.message, true); return; }
   mostrarStatusAdmin("Comando enviado — todas as transmissões ativas serão encerradas.", false);
+});
+
+document.getElementById("btn-parar-som").addEventListener("click", async () => {
+  const { error } = await sb.from("comandos_admin").insert({ tipo: "parar_som", payload: {} });
+  if (error) { mostrarStatusAdmin("Erro ao parar som: " + error.message, true); return; }
+  mostrarStatusAdmin("Som interrompido pra todos.", false);
 });
 
 document.getElementById("btn-promover-admin").addEventListener("click", async () => {
@@ -1843,20 +1932,34 @@ async function carregarListaSons() {
     linha.innerHTML = `
       <span>${escapeHtml(som.nome)} ${som.publico ? "🌐" : "🔒"}</span>
       <div class="acoes-som">
-        <button data-tocar="${som.id}">Tocar pra todos</button>
+        <button data-tocar-uma-vez="${som.id}">▶ Uma vez</button>
+        <button data-tocar-loop="${som.id}">🔁 Em loop</button>
         <button data-publico="${som.id}" data-atual="${som.publico}">${som.publico ? "Tornar privado" : "Tornar público"}</button>
       </div>`;
     container.appendChild(linha);
   });
 
-  container.querySelectorAll("[data-tocar]").forEach((btn) => {
+  container.querySelectorAll("[data-tocar-uma-vez]").forEach((btn) => {
     btn.addEventListener("click", async () => {
-      const som = sons.find((s) => s.id === btn.dataset.tocar);
+      const som = sons.find((s) => s.id === btn.dataset.tocarUmaVez);
       const { error: erroTocar } = await sb.from("comandos_admin").insert({
         tipo: "tocar_som",
-        payload: { url: som.arquivo_url, nome: som.nome }
+        payload: { url: som.arquivo_url, nome: som.nome, loop: false }
       });
       if (erroTocar) mostrarStatusAdmin("Erro ao tocar som: " + erroTocar.message, true);
+      else mostrarStatusAdmin("Tocando \"" + som.nome + "\" uma vez pra todos.", false);
+    });
+  });
+
+  container.querySelectorAll("[data-tocar-loop]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const som = sons.find((s) => s.id === btn.dataset.tocarLoop);
+      const { error: erroTocar } = await sb.from("comandos_admin").insert({
+        tipo: "tocar_som",
+        payload: { url: som.arquivo_url, nome: som.nome, loop: true }
+      });
+      if (erroTocar) mostrarStatusAdmin("Erro ao tocar som: " + erroTocar.message, true);
+      else mostrarStatusAdmin("Tocando \"" + som.nome + "\" em loop pra todos.", false);
     });
   });
 
