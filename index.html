@@ -1421,16 +1421,30 @@ function iniciarGravacaoSeAtivo(stream, alvoId) {
 
     // Sobe pro armazenamento privado — assim QUALQUER admin consegue ver depois,
     // não só a pessoa que transmitiu.
-    if (sb && sessaoIdParaGravacaoAtual) {
+    if (!sb) {
+      console.warn("Gravação feita, mas o Supabase não está disponível — ficou só local.");
+    } else if (!sessaoIdParaGravacaoAtual) {
+      console.warn("Gravação feita, mas sem sessão de histórico vinculada — não foi possível subir. sessaoIdParaGravacaoAtual estava vazio no início da gravação.");
+    } else {
       try {
         const caminho = `${sessaoIdParaGravacaoAtual}.webm`;
         const { error: erroUpload } = await sb.storage.from("gravacoes").upload(caminho, blob, { contentType: "video/webm" });
         if (erroUpload) {
           console.error("Erro ao subir gravação pro armazenamento central:", erroUpload.message);
+          alert("A gravação foi feita, mas não consegui enviar pro armazenamento central: " + erroUpload.message + "\n\nO admin não vai conseguir ver essa gravação pelo histórico — só você, localmente, com o botão de baixar aqui embaixo.");
         } else {
-          await sb.from("historico_transmissoes").update({ gravacao_url: caminho }).eq("id", sessaoIdParaGravacaoAtual);
+          const { error: erroUpdate } = await sb.from("historico_transmissoes").update({ gravacao_url: caminho }).eq("id", sessaoIdParaGravacaoAtual);
+          if (erroUpdate) {
+            console.error("Upload OK, mas falhou ao vincular no histórico:", erroUpdate.message);
+            alert("A gravação subiu, mas não consegui vincular ela ao histórico: " + erroUpdate.message);
+          } else {
+            console.log("Gravação enviada e vinculada ao histórico com sucesso:", caminho);
+          }
         }
-      } catch (e) { console.error(e); }
+      } catch (e) {
+        console.error(e);
+        alert("Erro inesperado ao enviar a gravação: " + e.message);
+      }
     }
   };
 
