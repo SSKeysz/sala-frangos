@@ -487,6 +487,23 @@
     color: var(--text-faint);
     letter-spacing: .5px;
   }
+  .controle-volume {
+    display: flex; align-items: center; gap: 6px;
+    padding: 6px 14px 10px;
+    border-top: 1px solid var(--line);
+  }
+  .controle-volume span { font-size: 12px; }
+  .controle-volume input[type="range"] {
+    flex: 1;
+    accent-color: var(--tally);
+  }
+  .controle-volume .valor-volume {
+    font-family: var(--font-mono);
+    font-size: 11px;
+    color: var(--text-faint);
+    min-width: 32px;
+    text-align: right;
+  }
 
   #vazio {
     text-align: center;
@@ -1146,9 +1163,19 @@ function mostrarMonitorRemoto(id, stream) {
           <button class="acao-mini" data-acao="pip" data-id="${id}" title="Picture-in-picture">⧉</button>
         </div>
       </div>
-      <div class="rotulo"><span><span class="qualidade-sinal" id="sinal-${id}" title="Qualidade da conexão"></span>${escapeHtml(nome)}</span><span class="selo">${id.substring(0,5).toUpperCase()}</span></div>`;
+      <div class="rotulo"><span><span class="qualidade-sinal" id="sinal-${id}" title="Qualidade da conexão"></span>${escapeHtml(nome)}</span><span class="selo">${id.substring(0,5).toUpperCase()}</span></div>
+      <div class="controle-volume">
+        <span>🔊</span>
+        <input type="range" min="0" max="100" value="100" data-volume-de="${id}">
+        <span class="valor-volume">100%</span>
+      </div>`;
     document.getElementById("grade").appendChild(card);
     ligarAcoesMonitor(card);
+    card.querySelector('[data-volume-de]').addEventListener("input", (e) => {
+      const video = card.querySelector("video");
+      video.volume = parseInt(e.target.value, 10) / 100;
+      card.querySelector(".valor-volume").textContent = e.target.value + "%";
+    });
   }
   const videoEl = card.querySelector("video");
   videoEl.srcObject = stream;
