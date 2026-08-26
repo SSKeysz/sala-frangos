@@ -781,7 +781,7 @@
 
 <script>
 // ======= CONFIGURAÇÃO =======
-const SIGNALING_SERVER_URL = "https://SEU-SERVIDOR.onrender.com";
+const SIGNALING_SERVER_URL = "https://sinalizacao-frangos.onrender.com";
 // ============================
 
 const params = new URLSearchParams(window.location.search);
@@ -877,6 +877,15 @@ let meuNome = localStorage.getItem(CHAVE_NOME);
 const modalNome = document.getElementById("modal-nome");
 const inputNome = document.getElementById("input-nome");
 
+// ===== WebRTC + Sinalização (declarado ANTES de qualquer chamada a conectarSocket) =====
+let socket;
+let meuSocketId = null;
+const peers = {};       // socketId -> RTCPeerConnection
+const nomesRemotos = {}; // socketId -> nome
+let streamLocal = null;
+
+const configIce = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+
 function iniciarComNome(nome) {
   meuNome = nome;
   localStorage.setItem(CHAVE_NOME, nome);
@@ -903,15 +912,6 @@ function confirmarNome() {
   }
   iniciarComNome(valor);
 }
-
-// ===== WebRTC + Sinalização =====
-let socket;
-let meuSocketId = null;
-const peers = {};       // socketId -> RTCPeerConnection
-const nomesRemotos = {}; // socketId -> nome
-let streamLocal = null;
-
-const configIce = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
 function conectarSocket() {
   socket = io(SIGNALING_SERVER_URL);
