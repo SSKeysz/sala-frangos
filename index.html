@@ -5,6 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Central de Transmissão</title>
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
 <style>
   @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Inter:wght@400;500;600;700&display=swap');
 
@@ -376,6 +377,102 @@
     font-size: 12px;
   }
 
+  /* ===== BANNER DE AVISO GLOBAL ===== */
+  #banner-aviso-global {
+    display: none;
+    background: var(--tally);
+    color: #1a0a08;
+    text-align: center;
+    padding: 10px 20px;
+    font-weight: 600;
+    font-size: 14px;
+  }
+  #banner-aviso-global.visivel { display: block; }
+
+  /* ===== PAINEL ADMIN ===== */
+  #modal-admin {
+    position: fixed; inset: 0;
+    background: rgba(8,9,11,0.85);
+    z-index: 150;
+    display: none;
+    align-items: flex-start; justify-content: center;
+    overflow-y: auto;
+    padding: 40px 20px;
+  }
+  #modal-admin.aberto { display: flex; }
+  .painel-admin-caixa {
+    background: var(--panel);
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    width: 100%; max-width: 640px;
+    padding: 28px;
+  }
+  .painel-admin-caixa h2 {
+    margin: 0 0 4px; font-size: 19px;
+  }
+  .painel-admin-caixa .sub {
+    color: var(--text-faint); font-size: 12px; margin: 0 0 24px;
+    font-family: var(--font-mono);
+  }
+  .secao-admin {
+    border-top: 1px solid var(--line);
+    padding: 20px 0;
+  }
+  .secao-admin:first-of-type { border-top: none; padding-top: 0; }
+  .secao-admin h3 {
+    font-size: 14px; margin: 0 0 12px;
+    display: flex; align-items: center; gap: 8px;
+  }
+  .secao-admin input[type="text"], .secao-admin input[type="password"], .secao-admin textarea {
+    width: 100%;
+    background: var(--panel-raised);
+    border: 1px solid var(--line-strong);
+    color: var(--text);
+    padding: 10px 12px;
+    border-radius: 3px;
+    font-size: 13px;
+    font-family: var(--font-ui);
+    margin-bottom: 8px;
+  }
+  .secao-admin .linha { display: flex; gap: 8px; }
+  .secao-admin .linha input { flex: 1; }
+  .btn-admin-acao {
+    background: var(--tally); color: #1a0a08;
+    border: none; padding: 9px 16px; border-radius: 3px;
+    font-weight: 700; font-size: 12px; cursor: pointer; white-space: nowrap;
+  }
+  .linha-toggle-admin {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 0;
+  }
+  .lista-historico { max-height: 220px; overflow-y: auto; font-size: 12px; font-family: var(--font-mono); }
+  .lista-historico .item { padding: 8px 0; border-bottom: 1px solid var(--line); color: var(--text-dim); }
+  .fechar-painel-admin {
+    float: right; background: none; border: none; color: var(--text-faint);
+    font-size: 20px; cursor: pointer; margin-top: -6px;
+  }
+  .item-som {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 8px 0; border-bottom: 1px solid var(--line); font-size: 13px;
+  }
+  .item-som .acoes-som { display: flex; gap: 6px; }
+  .item-som button {
+    background: var(--panel-raised); border: 1px solid var(--line-strong); color: var(--text);
+    padding: 5px 10px; border-radius: 3px; font-size: 11px; cursor: pointer;
+  }
+
+  /* ===== WIDGET DE SOM FORÇADO (soundboard tocando) ===== */
+  #widget-som-ativo {
+    position: fixed; bottom: 20px; right: 20px;
+    background: var(--panel); border: 1px solid var(--line-strong);
+    border-radius: 6px; padding: 12px 16px;
+    display: none; align-items: center; gap: 10px;
+    z-index: 120; font-size: 12px;
+    box-shadow: 0 6px 20px rgba(0,0,0,0.4);
+  }
+  #widget-som-ativo.visivel { display: flex; }
+  #widget-som-ativo input[type="range"] { width: 100px; }
+
   .monitor .rotulo {
     padding: 10px 14px;
     font-size: 13px;
@@ -530,8 +627,101 @@
     <span class="canal-tag">CANAL <b id="nome-sala">------</b></span>
     <span class="voce-tag" id="tag-usuario"></span>
     <button class="btn-icone" id="btn-tema" title="Personalizar tema" aria-label="Personalizar tema">🎨</button>
+    <button class="btn-icone" id="btn-admin" title="Painel administrativo" aria-label="Painel administrativo">🛠</button>
   </div>
 </header>
+
+<div id="banner-aviso-global"></div>
+
+<div id="modal-admin">
+  <div class="painel-admin-caixa">
+    <button class="fechar-painel-admin" id="btn-fechar-admin">✕</button>
+
+    <div id="admin-etapa-login">
+      <h2>Painel Administrativo</h2>
+      <p class="sub">Login vinculado ao Discord</p>
+      <button class="btn-admin-acao" id="btn-login-discord">Entrar com Discord</button>
+    </div>
+
+    <div id="admin-etapa-pin" style="display:none;">
+      <h2>Digite seu PIN</h2>
+      <p class="sub" id="texto-pin-instrucao">Confirmação de segurança, uma vez por sessão</p>
+      <input type="password" id="input-pin" placeholder="PIN" maxlength="10" inputmode="numeric">
+      <button class="btn-admin-acao" id="btn-confirmar-pin">Confirmar</button>
+    </div>
+
+    <div id="admin-etapa-negado" style="display:none;">
+      <h2>Acesso negado</h2>
+      <p class="sub">Essa conta do Discord não é administradora deste sistema.</p>
+    </div>
+
+    <div id="admin-painel-completo" style="display:none;">
+      <h2>Painel Administrativo</h2>
+      <p class="sub" id="texto-admin-logado">Logado</p>
+
+      <div class="secao-admin">
+        <h3>📢 Aviso global</h3>
+        <textarea id="input-aviso" rows="2" placeholder="Mensagem que vai aparecer pra todo mundo no site..."></textarea>
+        <div class="linha">
+          <input type="text" id="input-aviso-duracao" placeholder="Duração em segundos (ex: 15)" style="max-width:200px;">
+          <button class="btn-admin-acao" id="btn-enviar-aviso">Enviar pra todos</button>
+        </div>
+      </div>
+
+      <div class="secao-admin">
+        <h3>🔴 Gravação de segurança</h3>
+        <div class="linha-toggle-admin">
+          <span>Gravar transmissões (indicador discreto e visível)</span>
+          <input type="checkbox" id="toggle-gravacao-global">
+        </div>
+      </div>
+
+      <div class="secao-admin">
+        <h3>🔊 Controle de som forçado</h3>
+        <div class="linha-toggle-admin">
+          <span>Permitir que membros mutem os sons (0%–100%)</span>
+          <input type="checkbox" id="toggle-permitir-mutar">
+        </div>
+        <p class="sub" style="margin:4px 0 12px;">Se desligado, o volume mínimo que qualquer um consegue baixar é 50%.</p>
+      </div>
+
+      <div class="secao-admin">
+        <h3>🎵 Soundboard</h3>
+        <input type="file" id="input-arquivo-som" accept="audio/mpeg">
+        <div class="linha">
+          <input type="text" id="input-nome-som" placeholder="Nome desse som (ex: Buzina)">
+          <button class="btn-admin-acao" id="btn-subir-som">Enviar</button>
+        </div>
+        <div id="lista-sons"></div>
+      </div>
+
+      <div class="secao-admin">
+        <h3>🎭 Controles de zoeira</h3>
+        <button class="btn-admin-acao" id="btn-parar-tudo">Encerrar todas as transmissões ativas agora</button>
+      </div>
+
+      <div class="secao-admin">
+        <h3>👑 Promover admin</h3>
+        <div class="linha">
+          <input type="text" id="input-novo-admin-id" placeholder="ID do Discord da pessoa">
+          <input type="text" id="input-novo-admin-nome" placeholder="Nome (opcional)">
+          <button class="btn-admin-acao" id="btn-promover-admin">Promover</button>
+        </div>
+      </div>
+
+      <div class="secao-admin">
+        <h3>📜 Histórico de transmissões</h3>
+        <div class="lista-historico" id="lista-historico"></div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div id="widget-som-ativo">
+  <span id="nome-som-tocando">🎵 Som</span>
+  <input type="range" id="volume-som-forcado" min="0" max="100" value="100">
+  <span id="valor-volume-som">100%</span>
+</div>
 
 <div id="painel-tema" class="painel-flutuante">
   <p class="painel-titulo">Aparência</p>
@@ -591,17 +781,9 @@
 
 <script>
 // ======= CONFIGURAÇÃO =======
-const SIGNALING_SERVER_URL = "https://sinalizacao-frangos.onrender.com";
+const SIGNALING_SERVER_URL = "https://SEU-SERVIDOR.onrender.com";
 // ============================
 
-// ===== WebRTC + Sinalização =====
-let socket;
-const peers = {};       // socketId -> RTCPeerConnection
-const nomesRemotos = {}; // socketId -> nome
-let streamLocal = null;
-
-const configIce = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
-  
 const params = new URLSearchParams(window.location.search);
 let salaId = params.get("sala");
 if (!salaId) {
@@ -722,12 +904,20 @@ function confirmarNome() {
   iniciarComNome(valor);
 }
 
+// ===== WebRTC + Sinalização =====
+let socket;
+let meuSocketId = null;
+const peers = {};       // socketId -> RTCPeerConnection
+const nomesRemotos = {}; // socketId -> nome
+let streamLocal = null;
 
+const configIce = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
 function conectarSocket() {
   socket = io(SIGNALING_SERVER_URL);
 
   socket.on("connect", () => {
+    meuSocketId = socket.id;
     document.getElementById("ponto-status").classList.add("online");
     socket.emit("entrar-sala", { salaId, nome: meuNome });
   });
@@ -739,30 +929,52 @@ function conectarSocket() {
   socket.on("usuarios-na-sala", (usuarios) => {
     usuarios.forEach(({ id, nome }) => {
       nomesRemotos[id] = nome;
-      criarConexao(id, true);
+      criarConexao(id);
     });
     atualizarContadoresAssistindo();
   });
 
   socket.on("novo-usuario", ({ id, nome }) => {
     nomesRemotos[id] = nome;
-    criarConexao(id, false);
+    criarConexao(id);
     atualizarContadoresAssistindo();
   });
 
+  // Sinalização robusta ("perfect negotiation"): evita que duas pessoas
+  // mandando oferta ao mesmo tempo travem a conexão, e garante que
+  // renegociações (ex: alguém começa a compartilhar tela DEPOIS de já
+  // estar na call) sempre cheguem à outra ponta.
   socket.on("sinal", async ({ de, sinal }) => {
     let pc = peers[de];
-    if (!pc) pc = criarConexao(de, false);
+    if (!pc) pc = criarConexao(de);
 
-    if (sinal.tipo === "oferta") {
-      await pc.setRemoteDescription(new RTCSessionDescription(sinal.dados));
-      const resposta = await pc.createAnswer();
-      await pc.setLocalDescription(resposta);
-      socket.emit("sinal", { para: de, sinal: { tipo: "resposta", dados: resposta } });
-    } else if (sinal.tipo === "resposta") {
-      await pc.setRemoteDescription(new RTCSessionDescription(sinal.dados));
-    } else if (sinal.tipo === "candidato") {
-      try { await pc.addIceCandidate(sinal.dados); } catch (e) {}
+    try {
+      if (sinal.tipo === "oferta") {
+        const haConflito = pc.makingOffer || pc.signalingState !== "stable";
+        const devoIgnorar = !pc.polite && haConflito;
+        if (devoIgnorar) return;
+
+        if (haConflito) {
+          await Promise.all([
+            pc.setLocalDescription({ type: "rollback" }),
+            pc.setRemoteDescription(sinal.dados)
+          ]);
+        } else {
+          await pc.setRemoteDescription(sinal.dados);
+        }
+        await pc.setLocalDescription();
+        socket.emit("sinal", { para: de, sinal: { tipo: "resposta", dados: pc.localDescription } });
+
+      } else if (sinal.tipo === "resposta") {
+        await pc.setRemoteDescription(sinal.dados);
+
+      } else if (sinal.tipo === "candidato") {
+        try { await pc.addIceCandidate(sinal.dados); } catch (e) {
+          if (!pc.polite) console.warn("Candidato ICE rejeitado:", e);
+        }
+      }
+    } catch (e) {
+      console.error("Erro na sinalização com", de, e);
     }
   });
 
@@ -778,8 +990,12 @@ function conectarSocket() {
   });
 }
 
-function criarConexao(idRemoto, iniciarOferta) {
+function criarConexao(idRemoto) {
   const pc = new RTCPeerConnection(configIce);
+  pc.makingOffer = false;
+  // "Educado" (polite) é definido comparando os IDs — ambos os lados
+  // calculam o mesmo resultado, então nunca colidem sobre quem cede.
+  pc.polite = meuSocketId > idRemoto;
   peers[idRemoto] = pc;
 
   if (streamLocal) {
@@ -796,13 +1012,19 @@ function criarConexao(idRemoto, iniciarOferta) {
     mostrarMonitorRemoto(idRemoto, evento.streams[0]);
   };
 
-  if (iniciarOferta) {
-    pc.onnegotiationneeded = async () => {
-      const oferta = await pc.createOffer();
-      await pc.setLocalDescription(oferta);
-      socket.emit("sinal", { para: idRemoto, sinal: { tipo: "oferta", dados: oferta } });
-    };
-  }
+  // Dispara automaticamente toda vez que uma track é adicionada/removida
+  // (compartilhar tela pela primeira vez, ou depois de já estar na call).
+  pc.onnegotiationneeded = async () => {
+    try {
+      pc.makingOffer = true;
+      await pc.setLocalDescription();
+      socket.emit("sinal", { para: idRemoto, sinal: { tipo: "oferta", dados: pc.localDescription } });
+    } catch (e) {
+      console.error("Erro ao negociar com", idRemoto, e);
+    } finally {
+      pc.makingOffer = false;
+    }
+  };
 
   return pc;
 }
@@ -822,7 +1044,16 @@ document.getElementById("btn-compartilhar").addEventListener("click", async () =
       },
       audio: true
     });
-  } catch (e) { return; }
+  } catch (e) {
+    if (e.name === "NotAllowedError") {
+      alert("Compartilhamento cancelado ou bloqueado pelo navegador. Se você clicou em 'Cancelar' na janela de seleção de tela, é só clicar em 'Transmitir' de novo e escolher a tela/janela desta vez.");
+    } else if (e.name === "NotFoundError") {
+      alert("Não encontrei nenhuma tela ou janela disponível pra compartilhar.");
+    } else {
+      alert("Não foi possível iniciar o compartilhamento: " + e.message);
+    }
+    return;
+  }
 
   // Tenta forçar os parâmetros mais de perto (o navegador ajusta ao que for possível)
   const trackVideo = streamLocal.getVideoTracks()[0];
@@ -840,6 +1071,7 @@ document.getElementById("btn-compartilhar").addEventListener("click", async () =
 
   mostrarMonitorLocal(streamLocal);
   iniciarGravacaoSeAtivo(streamLocal, "local");
+  registrarInicioTransmissao();
 
   Object.values(peers).forEach((pc) => {
     streamLocal.getTracks().forEach((track) => pc.addTrack(track, streamLocal));
@@ -855,6 +1087,7 @@ document.getElementById("btn-parar").addEventListener("click", pararCompartilham
 
 function pararCompartilhamento() {
   pararGravacao("local");
+  registrarFimTransmissao();
   if (streamLocal) {
     streamLocal.getTracks().forEach((track) => track.stop());
     streamLocal = null;
@@ -881,6 +1114,7 @@ function mostrarMonitorLocal(stream) {
         <video autoplay muted playsinline></video>
         <div class="acoes-monitor">
           <button class="acao-mini" data-acao="pin" data-id="local" title="Selecionar para grade">☆</button>
+          <button class="acao-mini" data-acao="fullscreen" data-id="local" title="Tela cheia">⛶</button>
           <button class="acao-mini" data-acao="pip" data-id="local" title="Picture-in-picture">⧉</button>
         </div>
       </div>
@@ -908,6 +1142,7 @@ function mostrarMonitorRemoto(id, stream) {
         <video autoplay playsinline></video>
         <div class="acoes-monitor">
           <button class="acao-mini" data-acao="pin" data-id="${id}" title="Selecionar para grade">☆</button>
+          <button class="acao-mini" data-acao="fullscreen" data-id="${id}" title="Tela cheia">⛶</button>
           <button class="acao-mini" data-acao="pip" data-id="${id}" title="Picture-in-picture">⧉</button>
         </div>
       </div>
@@ -966,6 +1201,7 @@ function ligarAcoesMonitor(card) {
       const id = btn.dataset.id;
       if (acao === "pin") alternarSelecao(id, btn);
       if (acao === "pip") ativarPip(id);
+      if (acao === "fullscreen") ativarTelaCheia(id);
     });
   });
 }
@@ -1058,16 +1294,34 @@ function ativarPip(id) {
   }
 }
 
+function ativarTelaCheia(id) {
+  const card = document.getElementById(id === "local" ? "card-local" : "card-" + id);
+  if (!card) return;
+  const video = card.querySelector("video");
+  if (video.requestFullscreen) {
+    video.requestFullscreen().catch(() => {
+      alert("Não foi possível entrar em tela cheia.");
+    });
+  } else if (video.webkitRequestFullscreen) {
+    video.webkitRequestFullscreen();
+  } else {
+    alert("Seu navegador não suporta tela cheia aqui.");
+  }
+}
+
 // ===== Gravação de segurança (discreta) =====
 // TEMPORÁRIO: até o painel admin existir, ativa via ?admin_gravacao=1 na URL.
 // Quando o backend estiver pronto, esse controle passa a ser 100% do admin,
 // remoto, sem precisar desse parâmetro.
+// TEMPORÁRIO: até o painel admin existir, ativa via ?admin_gravacao=1 na URL.
+// AGORA controlado de verdade pelo painel admin (configuracoes_globais.gravacao_ativa),
+// mantendo o parâmetro de URL como fallback de teste manual.
 const gravacaoForcadaPeloDono = params.get("admin_gravacao") === "1";
 let gravador = null;
 let pedacosGravados = [];
 
 function iniciarGravacaoSeAtivo(stream, alvoId) {
-  if (!gravacaoForcadaPeloDono) return;
+  if (!gravacaoForcadaPeloDono && !(typeof configGlobalAtual !== "undefined" && configGlobalAtual.gravacao_ativa)) return;
 
   try {
     gravador = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp9" });
@@ -1167,6 +1421,329 @@ document.getElementById("btn-copiar").addEventListener("click", () => {
 });
 
 atualizarVazio();
+
+// ============================================================
+// PAINEL ADMIN — Supabase (login Discord + PIN + controles globais)
+// ============================================================
+const SUPABASE_URL = "https://wqgcbpodliqckctsibfn.supabase.co";
+const SUPABASE_KEY = "sb_publishable_q8zsIhKsTEfc4MtEGb5lrA_nUkZDdNH";
+const sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+let configGlobalAtual = { permitir_mutar_sons: true, gravacao_ativa: false };
+let souAdminAgora = false;
+
+// ----- Registrar cada sessão de transmissão no histórico -----
+let registroSessaoAtual = null;
+
+async function registrarInicioTransmissao() {
+  const agora = new Date().toISOString();
+  try {
+    const { data, error } = await sb.from("historico_transmissoes").insert({
+      sala_id: salaId,
+      nome_canal: nomeCanalUrl ? decodeURIComponent(nomeCanalUrl) : salaId,
+      nome_exibido: meuNome,
+      iniciado_em: agora
+    }).select().single();
+    if (!error) registroSessaoAtual = data;
+  } catch (e) { console.warn("Histórico indisponível:", e); }
+}
+
+async function registrarFimTransmissao() {
+  if (!registroSessaoAtual) return;
+  const agora = new Date();
+  const inicio = new Date(registroSessaoAtual.iniciado_em);
+  const duracao = Math.round((agora - inicio) / 1000);
+  try {
+    await sb.from("historico_transmissoes").update({
+      encerrado_em: agora.toISOString(),
+      duracao_segundos: duracao
+    }).eq("id", registroSessaoAtual.id);
+  } catch (e) {}
+  registroSessaoAtual = null;
+}
+
+// ----- Configurações globais em tempo real (todo visitante escuta) -----
+async function carregarConfigGlobalInicial() {
+  try {
+    const { data } = await sb.from("configuracoes_globais").select("*").eq("id", 1).single();
+    if (data) {
+      configGlobalAtual = data;
+      aplicarConfigGlobal(data);
+    }
+  } catch (e) {}
+}
+
+function aplicarConfigGlobal(cfg) {
+  const antesPermitiaMutar = configGlobalAtual.permitir_mutar_sons;
+  configGlobalAtual = cfg;
+
+  // Se o dono desligou a permissão de mutar, força todo som ativo de volta pro mínimo permitido
+  if (antesPermitiaMutar && !cfg.permitir_mutar_sons) {
+    const slider = document.getElementById("volume-som-forcado");
+    if (audioForcadoAtual && parseInt(slider.value, 10) < 50) {
+      slider.value = 100;
+      audioForcadoAtual.volume = 1;
+      document.getElementById("valor-volume-som").textContent = "100%";
+    }
+  }
+  const slider = document.getElementById("volume-som-forcado");
+  slider.min = cfg.permitir_mutar_sons ? "0" : "50";
+}
+
+carregarConfigGlobalInicial();
+
+sb.channel("config-global-realtime")
+  .on("postgres_changes", { event: "UPDATE", schema: "public", table: "configuracoes_globais" }, (payload) => {
+    aplicarConfigGlobal(payload.new);
+  })
+  .subscribe();
+
+// ----- Comandos do admin em tempo real (avisos, sons, "zoeiras") -----
+let audioForcadoAtual = null;
+
+sb.channel("comandos-admin-realtime")
+  .on("postgres_changes", { event: "INSERT", schema: "public", table: "comandos_admin" }, (payload) => {
+    tratarComandoAdmin(payload.new);
+  })
+  .subscribe();
+
+function tratarComandoAdmin(cmd) {
+  if (cmd.tipo === "aviso_global") {
+    const banner = document.getElementById("banner-aviso-global");
+    banner.textContent = "📢 " + cmd.payload.mensagem;
+    banner.classList.add("visivel");
+    const duracaoMs = (cmd.payload.duracao_segundos || 15) * 1000;
+    setTimeout(() => banner.classList.remove("visivel"), duracaoMs);
+  }
+
+  if (cmd.tipo === "tocar_som") {
+    if (audioForcadoAtual) { audioForcadoAtual.pause(); }
+    audioForcadoAtual = new Audio(cmd.payload.url);
+    audioForcadoAtual.loop = true;
+    audioForcadoAtual.volume = 1;
+    audioForcadoAtual.play().catch(() => {});
+
+    const widget = document.getElementById("widget-som-ativo");
+    document.getElementById("nome-som-tocando").textContent = "🎵 " + cmd.payload.nome;
+    const slider = document.getElementById("volume-som-forcado");
+    slider.min = configGlobalAtual.permitir_mutar_sons ? "0" : "50";
+    slider.value = "100";
+    document.getElementById("valor-volume-som").textContent = "100%";
+    widget.classList.add("visivel");
+  }
+
+  if (cmd.tipo === "parar_transmissoes") {
+    if (streamLocal) pararCompartilhamento();
+  }
+}
+
+document.getElementById("volume-som-forcado").addEventListener("input", (e) => {
+  if (!audioForcadoAtual) return;
+  const valor = parseInt(e.target.value, 10);
+  audioForcadoAtual.volume = valor / 100;
+  document.getElementById("valor-volume-som").textContent = valor + "%";
+});
+
+// Conecta a gravação de segurança à configuração global (substitui o parâmetro de URL antigo)
+const gravacaoAutorizadaPeloDono = () => configGlobalAtual.gravacao_ativa;
+
+// ----- Login admin (Discord OAuth + PIN) -----
+document.getElementById("btn-admin").addEventListener("click", () => {
+  document.getElementById("modal-admin").classList.add("aberto");
+  verificarEstadoLoginAdmin();
+});
+document.getElementById("btn-fechar-admin").addEventListener("click", () => {
+  document.getElementById("modal-admin").classList.remove("aberto");
+});
+
+async function verificarEstadoLoginAdmin() {
+  const { data: { session } } = await sb.auth.getSession();
+
+  document.getElementById("admin-etapa-login").style.display = "none";
+  document.getElementById("admin-etapa-pin").style.display = "none";
+  document.getElementById("admin-etapa-negado").style.display = "none";
+  document.getElementById("admin-painel-completo").style.display = "none";
+
+  if (!session) {
+    document.getElementById("admin-etapa-login").style.display = "block";
+    return;
+  }
+
+  const { data: souAdminResp } = await sb.rpc("sou_admin");
+  if (!souAdminResp) {
+    document.getElementById("admin-etapa-negado").style.display = "block";
+    return;
+  }
+
+  souAdminAgora = true;
+
+  if (sessionStorage.getItem("admin_pin_ok") === "1") {
+    abrirPainelCompleto();
+  } else {
+    document.getElementById("admin-etapa-pin").style.display = "block";
+  }
+}
+
+document.getElementById("btn-login-discord").addEventListener("click", async () => {
+  await sb.auth.signInWithOAuth({
+    provider: "discord",
+    options: { redirectTo: window.location.href }
+  });
+});
+
+document.getElementById("btn-confirmar-pin").addEventListener("click", async () => {
+  const pin = document.getElementById("input-pin").value.trim();
+  if (!pin) return;
+
+  // Se ainda não existe PIN definido pra esse admin, o primeiro valor digitado já define
+  const { data: dadosAdmin } = await sb.from("admins").select("pin_hash").eq("discord_id", await obterMeuDiscordId()).single();
+
+  if (!dadosAdmin || !dadosAdmin.pin_hash) {
+    await sb.rpc("definir_pin", { novo_pin: pin });
+    sessionStorage.setItem("admin_pin_ok", "1");
+    abrirPainelCompleto();
+    return;
+  }
+
+  const { data: correto } = await sb.rpc("verificar_pin", { tentativa: pin });
+  if (correto) {
+    sessionStorage.setItem("admin_pin_ok", "1");
+    abrirPainelCompleto();
+  } else {
+    document.getElementById("input-pin").style.borderColor = "var(--tally)";
+    document.getElementById("input-pin").value = "";
+  }
+});
+
+async function obterMeuDiscordId() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) return null;
+  return session.user.user_metadata?.provider_id || session.user.user_metadata?.sub || null;
+}
+
+async function abrirPainelCompleto() {
+  document.getElementById("admin-etapa-pin").style.display = "none";
+  document.getElementById("admin-painel-completo").style.display = "block";
+  const { data: { session } } = await sb.auth.getSession();
+  document.getElementById("texto-admin-logado").textContent = "Logado como " + (session?.user?.user_metadata?.full_name || session?.user?.email || "admin");
+
+  document.getElementById("toggle-gravacao-global").checked = !!configGlobalAtual.gravacao_ativa;
+  document.getElementById("toggle-permitir-mutar").checked = !!configGlobalAtual.permitir_mutar_sons;
+
+  carregarListaSons();
+  carregarHistorico();
+}
+
+// ----- Ações do painel -----
+document.getElementById("btn-enviar-aviso").addEventListener("click", async () => {
+  const mensagem = document.getElementById("input-aviso").value.trim();
+  const duracao = parseInt(document.getElementById("input-aviso-duracao").value, 10) || 15;
+  if (!mensagem) return;
+  await sb.from("comandos_admin").insert({
+    tipo: "aviso_global",
+    payload: { mensagem, duracao_segundos: duracao }
+  });
+  document.getElementById("input-aviso").value = "";
+});
+
+document.getElementById("toggle-gravacao-global").addEventListener("change", async (e) => {
+  await sb.from("configuracoes_globais").update({ gravacao_ativa: e.target.checked }).eq("id", 1);
+});
+
+document.getElementById("toggle-permitir-mutar").addEventListener("change", async (e) => {
+  await sb.from("configuracoes_globais").update({ permitir_mutar_sons: e.target.checked }).eq("id", 1);
+});
+
+document.getElementById("btn-parar-tudo").addEventListener("click", async () => {
+  await sb.from("comandos_admin").insert({ tipo: "parar_transmissoes", payload: {} });
+});
+
+document.getElementById("btn-promover-admin").addEventListener("click", async () => {
+  const idDiscord = document.getElementById("input-novo-admin-id").value.trim();
+  const nome = document.getElementById("input-novo-admin-nome").value.trim();
+  if (!idDiscord) return;
+  const { error } = await sb.from("admins").insert({ discord_id: idDiscord, discord_nome: nome || null });
+  if (error) {
+    alert("Não foi possível promover: " + error.message);
+  } else {
+    alert("Promovido com sucesso!");
+    document.getElementById("input-novo-admin-id").value = "";
+    document.getElementById("input-novo-admin-nome").value = "";
+  }
+});
+
+document.getElementById("btn-subir-som").addEventListener("click", async () => {
+  const arquivo = document.getElementById("input-arquivo-som").files[0];
+  const nome = document.getElementById("input-nome-som").value.trim();
+  if (!arquivo || !nome) { alert("Escolhe um arquivo MP3 e dá um nome pra ele."); return; }
+
+  const caminho = `${Date.now()}-${arquivo.name}`;
+  const { error: erroUpload } = await sb.storage.from("sons").upload(caminho, arquivo);
+  if (erroUpload) { alert("Erro no upload: " + erroUpload.message); return; }
+
+  const { data: urlPublica } = sb.storage.from("sons").getPublicUrl(caminho);
+
+  const meuId = await obterMeuDiscordId();
+  await sb.from("sons_soundboard").insert({
+    nome, arquivo_url: urlPublica.publicUrl, criado_por: meuId, publico: false
+  });
+
+  document.getElementById("input-arquivo-som").value = "";
+  document.getElementById("input-nome-som").value = "";
+  carregarListaSons();
+});
+
+async function carregarListaSons() {
+  const { data: sons } = await sb.from("sons_soundboard").select("*").order("criado_em", { ascending: false });
+  const container = document.getElementById("lista-sons");
+  container.innerHTML = "";
+  (sons || []).forEach((som) => {
+    const linha = document.createElement("div");
+    linha.className = "item-som";
+    linha.innerHTML = `
+      <span>${escapeHtml(som.nome)} ${som.publico ? "🌐" : "🔒"}</span>
+      <div class="acoes-som">
+        <button data-tocar="${som.id}">Tocar pra todos</button>
+        <button data-publico="${som.id}" data-atual="${som.publico}">${som.publico ? "Tornar privado" : "Tornar público"}</button>
+      </div>`;
+    container.appendChild(linha);
+  });
+
+  container.querySelectorAll("[data-tocar]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const som = sons.find((s) => s.id === btn.dataset.tocar);
+      await sb.from("comandos_admin").insert({
+        tipo: "tocar_som",
+        payload: { url: som.arquivo_url, nome: som.nome }
+      });
+    });
+  });
+
+  container.querySelectorAll("[data-publico]").forEach((btn) => {
+    btn.addEventListener("click", async () => {
+      const novoValor = btn.dataset.atual !== "true";
+      await sb.from("sons_soundboard").update({ publico: novoValor }).eq("id", btn.dataset.publico);
+      carregarListaSons();
+    });
+  });
+}
+
+async function carregarHistorico() {
+  const { data: historico } = await sb.from("historico_transmissoes")
+    .select("*").order("iniciado_em", { ascending: false }).limit(50);
+  const container = document.getElementById("lista-historico");
+  container.innerHTML = "";
+  (historico || []).forEach((item) => {
+    const dataFormatada = new Date(item.iniciado_em).toLocaleString("pt-BR");
+    const duracaoTexto = item.duracao_segundos
+      ? Math.floor(item.duracao_segundos / 60) + "min " + (item.duracao_segundos % 60) + "s"
+      : "em andamento";
+    const div = document.createElement("div");
+    div.className = "item";
+    div.textContent = `${item.nome_exibido} — ${item.nome_canal || item.sala_id} — ${dataFormatada} — ${duracaoTexto}`;
+    container.appendChild(div);
+  });
+}
 </script>
 
 </body>
