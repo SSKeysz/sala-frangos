@@ -1466,10 +1466,12 @@ atualizarVazio();
 
 // ============================================================
 // PAINEL ADMIN — Supabase (login Discord + PIN + controles globais)
+// Reescrito: todo erro aparece pra você, nada falha calado.
 // ============================================================
 const SUPABASE_URL = "https://wegcbpodilqckctsibfn.supabase.co";
 const SUPABASE_KEY = "sb_publishable_q8zsIhKsTEfc4MtEGb5lrA_nUkZDdNH";
 let sb = null;
+
 try {
   sb = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
 } catch (e) {
@@ -1478,65 +1480,86 @@ try {
 
 let configGlobalAtual = { permitir_mutar_sons: true, gravacao_ativa: false };
 let souAdminAgora = false;
+let meuDiscordIdCache = null;
 
-// ----- Registrar cada sessão de transmissão no histórico -----
+// Pequeno "toast" de status dentro do painel — sempre visível, nunca silencioso
+function mostrarStatusAdmin(mensagem, ehErro) {
+  let caixa = document.getElementById("status-admin-mensagem");
+  if (!caixa) {
+    caixa = document.createElement("div");
+    caixa.id = "status-admin-mensagem";
+    caixa.style.cssText = "margin-top:10px;padding:8px 12px;border-radius:3px;font-size:12px;font-family:var(--font-mono);";
+    const painel = document.querySelector(".painel-admin-caixa");
+    if (painel) painel.insertBefore(caixa, painel.firstChild.nextSibling);
+  }
+  caixa.textContent = mensagem;
+  caixa.style.background = ehErro ? "rgba(255,77,61,0.15)" : "rgba(53,214,138,0.15)";
+  caixa.style.color = ehErro ? "#ff8c80" : "#6ee7ab";
+  caixa.style.border = "1px solid " + (ehErro ? "#ff4d3d" : "#35d68a");
+}
+
+function limparStatusAdmin() {
+  const caixa = document.getElementById("status-admin-mensagem");
+  if (caixa) caixa.remove();
+}
+
+// ----- Histórico de transmissões -----
 let registroSessaoAtual = null;
 
 async function registrarInicioTransmissao() {
   if (!sb) return;
-  const agora = new Date().toISOString();
   try {
+    const agora = new Date().toISOString();
     const { data, error } = await sb.from("historico_transmissoes").insert({
       sala_id: salaId,
       nome_canal: nomeCanalUrl ? decodeURIComponent(nomeCanalUrl) : salaId,
       nome_exibido: meuNome,
       iniciado_em: agora
     }).select().single();
-    if (!error) registroSessaoAtual = data;
-  } catch (e) { console.warn("Histórico indisponível:", e); }
+    if (error) { console.error("Erro ao registrar início no histórico:", error.message); return; }
+    registroSessaoAtual = data;
+  } catch (e) { console.error("Histórico indisponível:", e); }
 }
 
 async function registrarFimTransmissao() {
   if (!sb || !registroSessaoAtual) return;
-  const agora = new Date();
-  const inicio = new Date(registroSessaoAtual.iniciado_em);
-  const duracao = Math.round((agora - inicio) / 1000);
   try {
-    await sb.from("historico_transmissoes").update({
+    const agora = new Date();
+    const inicio = new Date(registroSessaoAtual.iniciado_em);
+    const duracao = Math.round((agora - inicio) / 1000);
+    const { error } = await sb.from("historico_transmissoes").update({
       encerrado_em: agora.toISOString(),
       duracao_segundos: duracao
     }).eq("id", registroSessaoAtual.id);
-  } catch (e) {}
+    if (error) console.error("Erro ao registrar fim no histórico:", error.message);
+  } catch (e) { console.error(e); }
   registroSessaoAtual = null;
 }
 
-// ----- Configurações globais em tempo real (todo visitante escuta) -----
+// ----- Configurações globais em tempo real -----
 async function carregarConfigGlobalInicial() {
   if (!sb) return;
   try {
-    const { data } = await sb.from("configuracoes_globais").select("*").eq("id", 1).single();
-    if (data) {
-      configGlobalAtual = data;
-      aplicarConfigGlobal(data);
-    }
-  } catch (e) {}
+    const { data, error } = await sb.from("configuracoes_globais").select("*").eq("id", 1).single();
+    if (error) { console.error("Erro ao carregar config global:", error.message); return; }
+    if (data) { configGlobalAtual = data; aplicarConfigGlobal(data); }
+  } catch (e) { console.error(e); }
 }
 
 function aplicarConfigGlobal(cfg) {
   const antesPermitiaMutar = configGlobalAtual.permitir_mutar_sons;
   configGlobalAtual = cfg;
 
-  // Se o dono desligou a permissão de mutar, força todo som ativo de volta pro mínimo permitido
   if (antesPermitiaMutar && !cfg.permitir_mutar_sons) {
     const slider = document.getElementById("volume-som-forcado");
-    if (audioForcadoAtual && parseInt(slider.value, 10) < 50) {
+    if (audioForcadoAtual && slider && parseInt(slider.value, 10) < 50) {
       slider.value = 100;
       audioForcadoAtual.volume = 1;
       document.getElementById("valor-volume-som").textContent = "100%";
     }
   }
   const slider = document.getElementById("volume-som-forcado");
-  slider.min = cfg.permitir_mutar_sons ? "0" : "50";
+  if (slider) slider.min = cfg.permitir_mutar_sons ? "0" : "50";
 }
 
 carregarConfigGlobalInicial();
@@ -1546,10 +1569,10 @@ if (sb) {
     .on("postgres_changes", { event: "UPDATE", schema: "public", table: "configuracoes_globais" }, (payload) => {
       aplicarConfigGlobal(payload.new);
     })
-    .subscribe();
+    .subscribe((status) => { if (status === "CHANNEL_ERROR") console.error("Realtime (config global) falhou ao conectar."); });
 }
 
-// ----- Comandos do admin em tempo real (avisos, sons, "zoeiras") -----
+// ----- Comandos do admin em tempo real -----
 let audioForcadoAtual = null;
 
 if (sb) {
@@ -1557,7 +1580,7 @@ if (sb) {
     .on("postgres_changes", { event: "INSERT", schema: "public", table: "comandos_admin" }, (payload) => {
       tratarComandoAdmin(payload.new);
     })
-    .subscribe();
+    .subscribe((status) => { if (status === "CHANNEL_ERROR") console.error("Realtime (comandos admin) falhou ao conectar."); });
 }
 
 function tratarComandoAdmin(cmd) {
@@ -1570,11 +1593,11 @@ function tratarComandoAdmin(cmd) {
   }
 
   if (cmd.tipo === "tocar_som") {
-    if (audioForcadoAtual) { audioForcadoAtual.pause(); }
+    if (audioForcadoAtual) audioForcadoAtual.pause();
     audioForcadoAtual = new Audio(cmd.payload.url);
     audioForcadoAtual.loop = true;
     audioForcadoAtual.volume = 1;
-    audioForcadoAtual.play().catch(() => {});
+    audioForcadoAtual.play().catch((e) => console.error("Não consegui tocar o som:", e));
 
     const widget = document.getElementById("widget-som-ativo");
     document.getElementById("nome-som-tocando").textContent = "🎵 " + cmd.payload.nome;
@@ -1597,37 +1620,70 @@ document.getElementById("volume-som-forcado").addEventListener("input", (e) => {
   document.getElementById("valor-volume-som").textContent = valor + "%";
 });
 
-// Conecta a gravação de segurança à configuração global (substitui o parâmetro de URL antigo)
-const gravacaoAutorizadaPeloDono = () => configGlobalAtual.gravacao_ativa;
+// ----- Descobrir meu Discord ID de forma confiável -----
+async function obterMeuDiscordId() {
+  if (meuDiscordIdCache) return meuDiscordIdCache;
+  if (!sb) return null;
+  try {
+    const { data, error } = await sb.rpc("discord_id_atual");
+    if (error) { console.error("Erro ao obter Discord ID:", error.message); return null; }
+    meuDiscordIdCache = data;
+    return data;
+  } catch (e) { console.error(e); return null; }
+}
 
 // ----- Login admin (Discord OAuth + PIN) -----
 document.getElementById("btn-admin").addEventListener("click", () => {
   if (!sb) {
-    alert("O painel admin não carregou corretamente (falha ao conectar com o Supabase). Tenta recarregar a página. Se persistir, abre o Console do navegador (F12) e me manda o erro em vermelho que aparecer.");
+    alert("O painel admin não carregou (Supabase indisponível). Recarrega a página e tenta de novo.");
     return;
   }
   document.getElementById("modal-admin").classList.add("aberto");
+  limparStatusAdmin();
   verificarEstadoLoginAdmin();
 });
+
 document.getElementById("btn-fechar-admin").addEventListener("click", () => {
   document.getElementById("modal-admin").classList.remove("aberto");
 });
 
-async function verificarEstadoLoginAdmin() {
-  const { data: { session } } = await sb.auth.getSession();
+function esconderTodasEtapasAdmin() {
+  ["admin-etapa-login", "admin-etapa-pin", "admin-etapa-negado", "admin-painel-completo"].forEach((id) => {
+    document.getElementById(id).style.display = "none";
+  });
+}
 
-  document.getElementById("admin-etapa-login").style.display = "none";
-  document.getElementById("admin-etapa-pin").style.display = "none";
-  document.getElementById("admin-etapa-negado").style.display = "none";
-  document.getElementById("admin-painel-completo").style.display = "none";
+async function verificarEstadoLoginAdmin() {
+  esconderTodasEtapasAdmin();
+
+  const { data: { session }, error: erroSessao } = await sb.auth.getSession();
+  if (erroSessao) {
+    mostrarStatusAdmin("Erro ao verificar sessão: " + erroSessao.message, true);
+    document.getElementById("admin-etapa-login").style.display = "block";
+    return;
+  }
 
   if (!session) {
     document.getElementById("admin-etapa-login").style.display = "block";
     return;
   }
 
-  const { data: souAdminResp } = await sb.rpc("sou_admin");
+  const meuId = await obterMeuDiscordId();
+  if (!meuId) {
+    mostrarStatusAdmin("Não consegui identificar seu Discord ID a partir do login. Tenta sair e entrar de novo com o Discord.", true);
+    document.getElementById("admin-etapa-negado").style.display = "block";
+    return;
+  }
+
+  const { data: souAdminResp, error: erroSouAdmin } = await sb.rpc("sou_admin");
+  if (erroSouAdmin) {
+    mostrarStatusAdmin("Erro ao verificar permissão de admin: " + erroSouAdmin.message, true);
+    document.getElementById("admin-etapa-negado").style.display = "block";
+    return;
+  }
+
   if (!souAdminResp) {
+    mostrarStatusAdmin("Seu Discord ID (" + meuId + ") não está na lista de admins. Peça pra alguém já-admin te promover, ou cadastre esse ID diretamente no Supabase.", true);
     document.getElementById("admin-etapa-negado").style.display = "block";
     return;
   }
@@ -1642,47 +1698,51 @@ async function verificarEstadoLoginAdmin() {
 }
 
 document.getElementById("btn-login-discord").addEventListener("click", async () => {
-  await sb.auth.signInWithOAuth({
+  const { error } = await sb.auth.signInWithOAuth({
     provider: "discord",
     options: { redirectTo: window.location.href }
   });
+  if (error) mostrarStatusAdmin("Erro ao iniciar login: " + error.message, true);
 });
 
 document.getElementById("btn-confirmar-pin").addEventListener("click", async () => {
   const pin = document.getElementById("input-pin").value.trim();
   if (!pin) return;
 
-  // Se ainda não existe PIN definido pra esse admin, o primeiro valor digitado já define
-  const { data: dadosAdmin } = await sb.from("admins").select("pin_hash").eq("discord_id", await obterMeuDiscordId()).single();
+  const meuId = await obterMeuDiscordId();
+  if (!meuId) { mostrarStatusAdmin("Não consegui confirmar seu Discord ID.", true); return; }
 
-  if (!dadosAdmin || !dadosAdmin.pin_hash) {
-    await sb.rpc("definir_pin", { novo_pin: pin });
+  const { data: dadosAdmin, error: erroBusca } = await sb.from("admins").select("pin_hash").eq("discord_id", meuId).single();
+  if (erroBusca) { mostrarStatusAdmin("Erro ao buscar seus dados de admin: " + erroBusca.message, true); return; }
+
+  if (!dadosAdmin.pin_hash) {
+    const { error: erroDefinir } = await sb.rpc("definir_pin", { novo_pin: pin });
+    if (erroDefinir) { mostrarStatusAdmin("Erro ao definir PIN: " + erroDefinir.message, true); return; }
     sessionStorage.setItem("admin_pin_ok", "1");
     abrirPainelCompleto();
     return;
   }
 
-  const { data: correto } = await sb.rpc("verificar_pin", { tentativa: pin });
+  const { data: correto, error: erroVerificar } = await sb.rpc("verificar_pin", { tentativa: pin });
+  if (erroVerificar) { mostrarStatusAdmin("Erro ao verificar PIN: " + erroVerificar.message, true); return; }
+
   if (correto) {
     sessionStorage.setItem("admin_pin_ok", "1");
     abrirPainelCompleto();
   } else {
-    document.getElementById("input-pin").style.borderColor = "var(--tally)";
+    mostrarStatusAdmin("PIN incorreto.", true);
     document.getElementById("input-pin").value = "";
   }
 });
 
-async function obterMeuDiscordId() {
-  const { data: { session } } = await sb.auth.getSession();
-  if (!session) return null;
-  return session.user.user_metadata?.provider_id || session.user.user_metadata?.sub || null;
-}
-
 async function abrirPainelCompleto() {
-  document.getElementById("admin-etapa-pin").style.display = "none";
+  esconderTodasEtapasAdmin();
+  limparStatusAdmin();
   document.getElementById("admin-painel-completo").style.display = "block";
+
   const { data: { session } } = await sb.auth.getSession();
-  document.getElementById("texto-admin-logado").textContent = "Logado como " + (session?.user?.user_metadata?.full_name || session?.user?.email || "admin");
+  document.getElementById("texto-admin-logado").textContent =
+    "Logado como " + (session?.user?.user_metadata?.full_name || session?.user?.user_metadata?.name || session?.user?.email || "admin");
 
   document.getElementById("toggle-gravacao-global").checked = !!configGlobalAtual.gravacao_ativa;
   document.getElementById("toggle-permitir-mutar").checked = !!configGlobalAtual.permitir_mutar_sons;
@@ -1696,34 +1756,43 @@ document.getElementById("btn-enviar-aviso").addEventListener("click", async () =
   const mensagem = document.getElementById("input-aviso").value.trim();
   const duracao = parseInt(document.getElementById("input-aviso-duracao").value, 10) || 15;
   if (!mensagem) return;
-  await sb.from("comandos_admin").insert({
+
+  const { error } = await sb.from("comandos_admin").insert({
     tipo: "aviso_global",
     payload: { mensagem, duracao_segundos: duracao }
   });
+
+  if (error) { mostrarStatusAdmin("Erro ao enviar aviso: " + error.message, true); return; }
+  mostrarStatusAdmin("Aviso enviado com sucesso!", false);
   document.getElementById("input-aviso").value = "";
 });
 
 document.getElementById("toggle-gravacao-global").addEventListener("change", async (e) => {
-  await sb.from("configuracoes_globais").update({ gravacao_ativa: e.target.checked }).eq("id", 1);
+  const { error } = await sb.from("configuracoes_globais").update({ gravacao_ativa: e.target.checked }).eq("id", 1);
+  if (error) { mostrarStatusAdmin("Erro ao atualizar gravação: " + error.message, true); e.target.checked = !e.target.checked; }
 });
 
 document.getElementById("toggle-permitir-mutar").addEventListener("change", async (e) => {
-  await sb.from("configuracoes_globais").update({ permitir_mutar_sons: e.target.checked }).eq("id", 1);
+  const { error } = await sb.from("configuracoes_globais").update({ permitir_mutar_sons: e.target.checked }).eq("id", 1);
+  if (error) { mostrarStatusAdmin("Erro ao atualizar permissão: " + error.message, true); e.target.checked = !e.target.checked; }
 });
 
 document.getElementById("btn-parar-tudo").addEventListener("click", async () => {
-  await sb.from("comandos_admin").insert({ tipo: "parar_transmissoes", payload: {} });
+  const { error } = await sb.from("comandos_admin").insert({ tipo: "parar_transmissoes", payload: {} });
+  if (error) { mostrarStatusAdmin("Erro ao encerrar transmissões: " + error.message, true); return; }
+  mostrarStatusAdmin("Comando enviado — todas as transmissões ativas serão encerradas.", false);
 });
 
 document.getElementById("btn-promover-admin").addEventListener("click", async () => {
   const idDiscord = document.getElementById("input-novo-admin-id").value.trim();
   const nome = document.getElementById("input-novo-admin-nome").value.trim();
   if (!idDiscord) return;
+
   const { error } = await sb.from("admins").insert({ discord_id: idDiscord, discord_nome: nome || null });
   if (error) {
-    alert("Não foi possível promover: " + error.message);
+    mostrarStatusAdmin("Não foi possível promover: " + error.message, true);
   } else {
-    alert("Promovido com sucesso!");
+    mostrarStatusAdmin("Promovido com sucesso!", false);
     document.getElementById("input-novo-admin-id").value = "";
     document.getElementById("input-novo-admin-nome").value = "";
   }
@@ -1732,29 +1801,43 @@ document.getElementById("btn-promover-admin").addEventListener("click", async ()
 document.getElementById("btn-subir-som").addEventListener("click", async () => {
   const arquivo = document.getElementById("input-arquivo-som").files[0];
   const nome = document.getElementById("input-nome-som").value.trim();
-  if (!arquivo || !nome) { alert("Escolhe um arquivo MP3 e dá um nome pra ele."); return; }
+  if (!arquivo || !nome) { mostrarStatusAdmin("Escolhe um arquivo MP3 e dá um nome pra ele.", true); return; }
 
   const caminho = `${Date.now()}-${arquivo.name}`;
   const { error: erroUpload } = await sb.storage.from("sons").upload(caminho, arquivo);
-  if (erroUpload) { alert("Erro no upload: " + erroUpload.message); return; }
+  if (erroUpload) { mostrarStatusAdmin("Erro no upload: " + erroUpload.message, true); return; }
 
   const { data: urlPublica } = sb.storage.from("sons").getPublicUrl(caminho);
-
   const meuId = await obterMeuDiscordId();
-  await sb.from("sons_soundboard").insert({
+
+  const { error: erroInsert } = await sb.from("sons_soundboard").insert({
     nome, arquivo_url: urlPublica.publicUrl, criado_por: meuId, publico: false
   });
 
+  if (erroInsert) { mostrarStatusAdmin("Erro ao salvar som: " + erroInsert.message, true); return; }
+
+  mostrarStatusAdmin("Som enviado com sucesso!", false);
   document.getElementById("input-arquivo-som").value = "";
   document.getElementById("input-nome-som").value = "";
   carregarListaSons();
 });
 
 async function carregarListaSons() {
-  const { data: sons } = await sb.from("sons_soundboard").select("*").order("criado_em", { ascending: false });
+  const { data: sons, error } = await sb.from("sons_soundboard").select("*").order("criado_em", { ascending: false });
   const container = document.getElementById("lista-sons");
+
+  if (error) {
+    container.innerHTML = `<p class="sub" style="color:var(--tally);">Erro ao carregar sons: ${escapeHtml(error.message)}</p>`;
+    return;
+  }
+
   container.innerHTML = "";
-  (sons || []).forEach((som) => {
+  if (!sons || sons.length === 0) {
+    container.innerHTML = `<p class="sub">Nenhum som enviado ainda.</p>`;
+    return;
+  }
+
+  sons.forEach((som) => {
     const linha = document.createElement("div");
     linha.className = "item-som";
     linha.innerHTML = `
@@ -1769,28 +1852,41 @@ async function carregarListaSons() {
   container.querySelectorAll("[data-tocar]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const som = sons.find((s) => s.id === btn.dataset.tocar);
-      await sb.from("comandos_admin").insert({
+      const { error: erroTocar } = await sb.from("comandos_admin").insert({
         tipo: "tocar_som",
         payload: { url: som.arquivo_url, nome: som.nome }
       });
+      if (erroTocar) mostrarStatusAdmin("Erro ao tocar som: " + erroTocar.message, true);
     });
   });
 
   container.querySelectorAll("[data-publico]").forEach((btn) => {
     btn.addEventListener("click", async () => {
       const novoValor = btn.dataset.atual !== "true";
-      await sb.from("sons_soundboard").update({ publico: novoValor }).eq("id", btn.dataset.publico);
+      const { error: erroTogglePublico } = await sb.from("sons_soundboard").update({ publico: novoValor }).eq("id", btn.dataset.publico);
+      if (erroTogglePublico) { mostrarStatusAdmin("Erro: " + erroTogglePublico.message, true); return; }
       carregarListaSons();
     });
   });
 }
 
 async function carregarHistorico() {
-  const { data: historico } = await sb.from("historico_transmissoes")
-    .select("*").order("iniciado_em", { ascending: false }).limit(50);
   const container = document.getElementById("lista-historico");
+  const { data: historico, error } = await sb.from("historico_transmissoes")
+    .select("*").order("iniciado_em", { ascending: false }).limit(50);
+
+  if (error) {
+    container.innerHTML = `<p class="sub" style="color:var(--tally);">Erro ao carregar histórico: ${escapeHtml(error.message)}</p>`;
+    return;
+  }
+
   container.innerHTML = "";
-  (historico || []).forEach((item) => {
+  if (!historico || historico.length === 0) {
+    container.innerHTML = `<p class="sub">Nenhuma transmissão registrada ainda.</p>`;
+    return;
+  }
+
+  historico.forEach((item) => {
     const dataFormatada = new Date(item.iniciado_em).toLocaleString("pt-BR");
     const duracaoTexto = item.duracao_segundos
       ? Math.floor(item.duracao_segundos / 60) + "min " + (item.duracao_segundos % 60) + "s"
