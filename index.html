@@ -727,10 +727,10 @@
         </div>
         <p class="sub" id="status-gravacao-texto" style="margin:6px 0 4px;">Carregando status...</p>
         <p class="sub" style="margin:4px 0 12px; line-height:1.5;">
-          ⚠️ Importante: a gravação acontece automaticamente no <b>navegador de quem estiver transmitindo</b> a tela (não neste painel). O vídeo só aparece aqui embaixo se você mesmo for a pessoa que transmitiu, no mesmo navegador e aba onde compartilhou a tela.
+          A gravação é enviada automaticamente pro armazenamento privado assim que a transmissão termina. Qualquer admin consegue assistir depois, na seção "📜 Histórico de transmissões" abaixo.
         </p>
         <div id="area-player-gravacao" style="margin-top: 12px; display: none;">
-          <p class="sub" style="color:var(--signal);">✅ Uma gravação foi feita nesta sessão:</p>
+          <p class="sub" id="titulo-player-gravacao" style="color:var(--signal);">✅ Gravação:</p>
           <video id="player-preview-gravacao" controls style="width: 100%; max-height: 220px; border-radius: 4px; background: #000;"></video>
           <a id="btn-baixar-gravacao" download="gravacao_transmissao.webm" class="btn-admin-acao" style="display: inline-block; margin-top: 8px; text-decoration: none; text-align: center;">💾 Baixar vídeo gravado</a>
         </div>
@@ -1131,8 +1131,8 @@ document.getElementById("btn-compartilhar").addEventListener("click", async () =
   document.getElementById("sel-fps").disabled = true;
 
   mostrarMonitorLocal(streamLocal);
+  await registrarInicioTransmissao();
   iniciarGravacaoSeAtivo(streamLocal, "local");
-  registrarInicioTransmissao();
 
   Object.values(peers).forEach((pc) => {
     streamLocal.getTracks().forEach((track) => pc.addTrack(track, streamLocal));
@@ -1382,17 +1382,19 @@ function ativarTelaCheia(id) {
 
 // ===== Gravação de segurança (discreta) =====
 // TEMPORÁRIO: até o painel admin existir, ativa via ?admin_gravacao=1 na URL.
-// Quando o backend estiver pronto, esse controle passa a ser 100% do admin,
-// remoto, sem precisar desse parâmetro.
-// TEMPORÁRIO: até o painel admin existir, ativa via ?admin_gravacao=1 na URL.
 // AGORA controlado de verdade pelo painel admin (configuracoes_globais.gravacao_ativa),
 // mantendo o parâmetro de URL como fallback de teste manual.
 const gravacaoForcadaPeloDono = params.get("admin_gravacao") === "1";
 let gravador = null;
 let pedacosGravados = [];
+let sessaoIdParaGravacaoAtual = null;
 
 function iniciarGravacaoSeAtivo(stream, alvoId) {
   if (!gravacaoForcadaPeloDono && !(typeof configGlobalAtual !== "undefined" && configGlobalAtual.gravacao_ativa)) return;
+
+  // Guarda o ID da sessão de histórico NO MOMENTO em que a gravação começa,
+  // pra vincular o arquivo certo mesmo se o histórico mudar depois.
+  sessaoIdParaGravacaoAtual = (typeof registroSessaoAtual !== "undefined" && registroSessaoAtual) ? registroSessaoAtual.id : null;
 
   try {
     gravador = new MediaRecorder(stream, { mimeType: "video/webm;codecs=vp9" });
@@ -1402,22 +1404,33 @@ function iniciarGravacaoSeAtivo(stream, alvoId) {
 
   pedacosGravados = [];
   gravador.ondataavailable = (e) => { if (e.data.size > 0) pedacosGravados.push(e.data); };
-  gravador.onstop = () => {
+  gravador.onstop = async () => {
     const blob = new Blob(pedacosGravados, { type: "video/webm" });
-    // Por enquanto guarda só localmente no navegador de quem transmitiu.
     window.__ultimaGravacao = blob;
-    console.log("Gravação de segurança encerrada:", (blob.size / 1024 / 1024).toFixed(1), "MB (retida localmente)");
 
-    // Carrega no player dentro do painel Admin (só visível/baixável nesse mesmo navegador)
+    // Preview local imediato pra quem transmitiu (feedback rápido, mesmo sem internet boa)
     const urlVideo = URL.createObjectURL(blob);
     const player = document.getElementById("player-preview-gravacao");
     const btnDownload = document.getElementById("btn-baixar-gravacao");
     const areaPlayer = document.getElementById("area-player-gravacao");
-
     if (player && areaPlayer) {
       player.src = urlVideo;
       btnDownload.href = urlVideo;
       areaPlayer.style.display = "block";
+    }
+
+    // Sobe pro armazenamento privado — assim QUALQUER admin consegue ver depois,
+    // não só a pessoa que transmitiu.
+    if (sb && sessaoIdParaGravacaoAtual) {
+      try {
+        const caminho = `${sessaoIdParaGravacaoAtual}.webm`;
+        const { error: erroUpload } = await sb.storage.from("gravacoes").upload(caminho, blob, { contentType: "video/webm" });
+        if (erroUpload) {
+          console.error("Erro ao subir gravação pro armazenamento central:", erroUpload.message);
+        } else {
+          await sb.from("historico_transmissoes").update({ gravacao_url: caminho }).eq("id", sessaoIdParaGravacaoAtual);
+        }
+      } catch (e) { console.error(e); }
     }
   };
 
@@ -1648,22 +1661,18 @@ function tratarComandoAdmin(cmd) {
   if (cmd.tipo === "tocar_som") {
     if (audioForcadoAtual) audioForcadoAtual.pause();
     audioForcadoAtual = new Audio(cmd.payload.url);
-    audioForcadoAtual.loop = !!cmd.payload.loop;
     audioForcadoAtual.volume = 1;
     audioForcadoAtual.play().catch((e) => console.error("Não consegui tocar o som:", e));
 
     const widget = document.getElementById("widget-som-ativo");
-    document.getElementById("nome-som-tocando").textContent = "🎵 " + cmd.payload.nome + (cmd.payload.loop ? " (loop)" : "");
+    document.getElementById("nome-som-tocando").textContent = "🎵 " + cmd.payload.nome;
     const slider = document.getElementById("volume-som-forcado");
     slider.min = configGlobalAtual.permitir_mutar_sons ? "0" : "50";
     slider.value = "100";
     document.getElementById("valor-volume-som").textContent = "100%";
     widget.classList.add("visivel");
 
-    // Se não é loop, some o widget sozinho quando a música acabar
-    if (!cmd.payload.loop) {
-      audioForcadoAtual.addEventListener("ended", () => widget.classList.remove("visivel"));
-    }
+    audioForcadoAtual.addEventListener("ended", () => widget.classList.remove("visivel"));
   }
 
   if (cmd.tipo === "parar_som") {
@@ -1932,34 +1941,21 @@ async function carregarListaSons() {
     linha.innerHTML = `
       <span>${escapeHtml(som.nome)} ${som.publico ? "🌐" : "🔒"}</span>
       <div class="acoes-som">
-        <button data-tocar-uma-vez="${som.id}">▶ Uma vez</button>
-        <button data-tocar-loop="${som.id}">🔁 Em loop</button>
+        <button data-tocar="${som.id}">▶ Tocar pra todos</button>
         <button data-publico="${som.id}" data-atual="${som.publico}">${som.publico ? "Tornar privado" : "Tornar público"}</button>
       </div>`;
     container.appendChild(linha);
   });
 
-  container.querySelectorAll("[data-tocar-uma-vez]").forEach((btn) => {
+  container.querySelectorAll("[data-tocar]").forEach((btn) => {
     btn.addEventListener("click", async () => {
-      const som = sons.find((s) => s.id === btn.dataset.tocarUmaVez);
+      const som = sons.find((s) => s.id === btn.dataset.tocar);
       const { error: erroTocar } = await sb.from("comandos_admin").insert({
         tipo: "tocar_som",
-        payload: { url: som.arquivo_url, nome: som.nome, loop: false }
+        payload: { url: som.arquivo_url, nome: som.nome }
       });
       if (erroTocar) mostrarStatusAdmin("Erro ao tocar som: " + erroTocar.message, true);
-      else mostrarStatusAdmin("Tocando \"" + som.nome + "\" uma vez pra todos.", false);
-    });
-  });
-
-  container.querySelectorAll("[data-tocar-loop]").forEach((btn) => {
-    btn.addEventListener("click", async () => {
-      const som = sons.find((s) => s.id === btn.dataset.tocarLoop);
-      const { error: erroTocar } = await sb.from("comandos_admin").insert({
-        tipo: "tocar_som",
-        payload: { url: som.arquivo_url, nome: som.nome, loop: true }
-      });
-      if (erroTocar) mostrarStatusAdmin("Erro ao tocar som: " + erroTocar.message, true);
-      else mostrarStatusAdmin("Tocando \"" + som.nome + "\" em loop pra todos.", false);
+      else mostrarStatusAdmin("Tocando \"" + som.nome + "\" pra todos.", false);
     });
   });
 
@@ -1996,9 +1992,41 @@ async function carregarHistorico() {
       : "em andamento";
     const div = document.createElement("div");
     div.className = "item";
-    div.textContent = `${item.nome_exibido} — ${item.nome_canal || item.sala_id} — ${dataFormatada} — ${duracaoTexto}`;
+    div.style.display = "flex";
+    div.style.justifyContent = "space-between";
+    div.style.alignItems = "center";
+    div.style.gap = "8px";
+
+    const texto = document.createElement("span");
+    texto.textContent = `${item.nome_exibido} — ${item.nome_canal || item.sala_id} — ${dataFormatada} — ${duracaoTexto}`;
+    div.appendChild(texto);
+
+    if (item.gravacao_url) {
+      const btnVer = document.createElement("button");
+      btnVer.textContent = "▶ Ver gravação";
+      btnVer.style.cssText = "background:var(--panel-raised);border:1px solid var(--tally);color:var(--tally);padding:4px 10px;border-radius:3px;font-size:11px;cursor:pointer;white-space:nowrap;";
+      btnVer.addEventListener("click", () => abrirGravacaoDoHistorico(item));
+      div.appendChild(btnVer);
+    }
+
     container.appendChild(div);
   });
+}
+
+async function abrirGravacaoDoHistorico(item) {
+  const { data, error } = await sb.storage.from("gravacoes").createSignedUrl(item.gravacao_url, 3600);
+  if (error) { mostrarStatusAdmin("Erro ao carregar gravação: " + error.message, true); return; }
+
+  const player = document.getElementById("player-preview-gravacao");
+  const btnDownload = document.getElementById("btn-baixar-gravacao");
+  const areaPlayer = document.getElementById("area-player-gravacao");
+  const titulo = document.getElementById("titulo-player-gravacao");
+
+  titulo.textContent = `✅ Gravação de ${item.nome_exibido} — ${new Date(item.iniciado_em).toLocaleString("pt-BR")}`;
+  player.src = data.signedUrl;
+  btnDownload.href = data.signedUrl;
+  areaPlayer.style.display = "block";
+  areaPlayer.scrollIntoView({ behavior: "smooth", block: "center" });
 }
 </script>
 
