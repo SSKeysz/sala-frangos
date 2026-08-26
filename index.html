@@ -691,6 +691,10 @@
           <span>Gravar transmissões (indicador discreto e visível)</span>
           <input type="checkbox" id="toggle-gravacao-global">
         </div>
+        <div id="area-player-gravacao" style="margin-top: 12px; display: none;">
+          <video id="player-preview-gravacao" controls style="width: 100%; max-height: 220px; border-radius: 4px; background: #000;"></video>
+          <a id="btn-baixar-gravacao" download="gravacao_transmissao.webm" class="btn-admin-acao" style="display: inline-block; margin-top: 8px; text-decoration: none; text-align: center;">💾 Baixar vídeo gravado</a>
+        </div>
       </div>
 
       <div class="secao-admin">
@@ -1360,10 +1364,21 @@ function iniciarGravacaoSeAtivo(stream, alvoId) {
   gravador.ondataavailable = (e) => { if (e.data.size > 0) pedacosGravados.push(e.data); };
   gravador.onstop = () => {
     const blob = new Blob(pedacosGravados, { type: "video/webm" });
-    // Por enquanto guarda só localmente na sessão do navegador de quem transmitiu.
-    // Na próxima fase (com backend), isso sobe automaticamente pro armazenamento do admin.
+    // Por enquanto guarda só localmente no navegador de quem transmitiu.
     window.__ultimaGravacao = blob;
-    console.log("Gravação de segurança encerrada:", (blob.size / 1024 / 1024).toFixed(1), "MB (retida localmente até o backend existir)");
+    console.log("Gravação de segurança encerrada:", (blob.size / 1024 / 1024).toFixed(1), "MB (retida localmente)");
+
+    // Carrega no player dentro do painel Admin (só visível/baixável nesse mesmo navegador)
+    const urlVideo = URL.createObjectURL(blob);
+    const player = document.getElementById("player-preview-gravacao");
+    const btnDownload = document.getElementById("btn-baixar-gravacao");
+    const areaPlayer = document.getElementById("area-player-gravacao");
+
+    if (player && areaPlayer) {
+      player.src = urlVideo;
+      btnDownload.href = urlVideo;
+      areaPlayer.style.display = "block";
+    }
   };
 
   gravador.start();
