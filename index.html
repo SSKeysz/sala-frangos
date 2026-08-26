@@ -434,6 +434,16 @@
     padding: 40px 20px;
   }
   #modal-admin.aberto { display: flex; }
+  #modal-minhas-gravacoes {
+    position: fixed; inset: 0;
+    background: rgba(8,9,11,0.85);
+    z-index: 150;
+    display: none;
+    align-items: flex-start; justify-content: center;
+    overflow-y: auto;
+    padding: 40px 20px;
+  }
+  #modal-minhas-gravacoes.aberto { display: flex; }
   .painel-admin-caixa {
     background: var(--panel);
     border: 1px solid var(--line);
@@ -678,6 +688,7 @@
     <span class="canal-tag">CANAL <b id="nome-sala">------</b></span>
     <span class="voce-tag" id="tag-usuario"></span>
     <button class="btn-icone" id="btn-tema" title="Personalizar tema" aria-label="Personalizar tema">🎨</button>
+    <button class="btn-icone" id="btn-minhas-gravacoes" title="Minhas gravações" aria-label="Minhas gravações">🎬</button>
     <button class="btn-icone" id="btn-admin" title="Painel administrativo" aria-label="Painel administrativo">🛠</button>
   </div>
 </header>
@@ -734,6 +745,10 @@
           <video id="player-preview-gravacao" controls style="width: 100%; max-height: 220px; border-radius: 4px; background: #000;"></video>
           <a id="btn-baixar-gravacao" download="gravacao_transmissao.webm" class="btn-admin-acao" style="display: inline-block; margin-top: 8px; text-decoration: none; text-align: center;">💾 Baixar vídeo gravado</a>
         </div>
+        <div class="linha-toggle-admin" style="margin-top:14px; border-top:1px solid var(--line); padding-top:14px;">
+          <span>Permitir que cada pessoa veja a própria gravação (aba 🎬)</span>
+          <input type="checkbox" id="toggle-ver-propria-gravacao">
+        </div>
       </div>
 
       <div class="secao-admin">
@@ -775,6 +790,22 @@
         <div class="lista-historico" id="lista-historico"></div>
       </div>
     </div>
+  </div>
+</div>
+
+<div id="modal-minhas-gravacoes">
+  <div class="painel-admin-caixa">
+    <button class="fechar-painel-admin" id="btn-fechar-minhas-gravacoes">✕</button>
+    <h2>🎬 Minhas gravações</h2>
+    <p class="sub">Só você vê essa lista — cada gravação aqui é vinculada a este navegador.</p>
+
+    <div id="minhas-gravacoes-desativado" style="display:none;">
+      <p class="sub" style="line-height:1.5;">O dono do site desativou o acesso às próprias gravações no momento. Fala com ele se precisar de alguma.</p>
+    </div>
+    <div id="minhas-gravacoes-vazio" style="display:none;">
+      <p class="sub" style="line-height:1.5;">Nenhuma gravação sua ainda. Elas aparecem aqui depois que você transmite com a gravação de segurança ativa.</p>
+    </div>
+    <div class="lista-historico" id="lista-minhas-gravacoes"></div>
   </div>
 </div>
 
@@ -1545,9 +1576,27 @@ try {
   console.error("Painel admin: falha ao carregar Supabase.", e);
 }
 
-let configGlobalAtual = { permitir_mutar_sons: true, gravacao_ativa: false };
+let configGlobalAtual = { permitir_mutar_sons: true, gravacao_ativa: false, permitir_ver_propria_gravacao: false };
 let souAdminAgora = false;
 let meuDiscordIdCache = null;
+
+// Cada visitante (mesmo sem ser admin) recebe uma identidade anônima persistida
+// pelo próprio Supabase — é isso que amarra "minhas gravações" só a mim, sem
+// precisar de login de verdade. Isso é o que torna a aba 🎬 segura de verdade
+// (a regra "só vê a própria" é garantida no banco, não só escondida na tela).
+let meuUsuarioIdPromise = null;
+async function garantirUsuarioAnonimo() {
+  if (!sb) return null;
+  const { data: { session } } = await sb.auth.getSession();
+  if (session) return session.user.id;
+  const { data, error } = await sb.auth.signInAnonymously();
+  if (error) {
+    console.error("Não consegui criar identidade anônima (login anônimo desativado no Supabase?):", error.message);
+    return null;
+  }
+  return data.user.id;
+}
+if (sb) meuUsuarioIdPromise = garantirUsuarioAnonimo();
 
 // Pequeno "toast" de status dentro do painel — sempre visível, nunca silencioso
 function mostrarStatusAdmin(mensagem, ehErro) {
@@ -1577,10 +1626,12 @@ async function registrarInicioTransmissao() {
   if (!sb) return;
   try {
     const agora = new Date().toISOString();
+    const usuarioId = await meuUsuarioIdPromise;
     const { data, error } = await sb.from("historico_transmissoes").insert({
       sala_id: salaId,
       nome_canal: nomeCanalUrl ? decodeURIComponent(nomeCanalUrl) : salaId,
       nome_exibido: meuNome,
+      usuario_id: usuarioId,
       iniciado_em: agora
     }).select().single();
     if (error) { console.error("Erro ao registrar início no histórico:", error.message); return; }
@@ -1832,6 +1883,7 @@ async function abrirPainelCompleto() {
 
   document.getElementById("toggle-gravacao-global").checked = !!configGlobalAtual.gravacao_ativa;
   document.getElementById("toggle-permitir-mutar").checked = !!configGlobalAtual.permitir_mutar_sons;
+  document.getElementById("toggle-ver-propria-gravacao").checked = !!configGlobalAtual.permitir_ver_propria_gravacao;
   atualizarTextoStatusGravacao();
 
   carregarListaSons();
@@ -1881,6 +1933,17 @@ document.getElementById("toggle-gravacao-global").addEventListener("change", asy
 document.getElementById("toggle-permitir-mutar").addEventListener("change", async (e) => {
   const { error } = await sb.from("configuracoes_globais").update({ permitir_mutar_sons: e.target.checked }).eq("id", 1);
   if (error) { mostrarStatusAdmin("Erro ao atualizar permissão: " + error.message, true); e.target.checked = !e.target.checked; }
+});
+
+document.getElementById("toggle-ver-propria-gravacao").addEventListener("change", async (e) => {
+  const { error } = await sb.from("configuracoes_globais").update({ permitir_ver_propria_gravacao: e.target.checked }).eq("id", 1);
+  if (error) {
+    mostrarStatusAdmin("Erro ao atualizar permissão: " + error.message, true);
+    e.target.checked = !e.target.checked;
+    return;
+  }
+  configGlobalAtual.permitir_ver_propria_gravacao = e.target.checked;
+  mostrarStatusAdmin(e.target.checked ? "Membros já podem ver a própria gravação." : "Acesso às gravações pessoais desativado.", false);
 });
 
 document.getElementById("btn-parar-tudo").addEventListener("click", async () => {
@@ -2041,6 +2104,83 @@ async function abrirGravacaoDoHistorico(item) {
   btnDownload.href = data.signedUrl;
   areaPlayer.style.display = "block";
   areaPlayer.scrollIntoView({ behavior: "smooth", block: "center" });
+}
+
+// ----- Aba "Minhas gravações" (qualquer visitante, sem precisar ser admin) -----
+document.getElementById("btn-minhas-gravacoes").addEventListener("click", async () => {
+  document.getElementById("modal-minhas-gravacoes").classList.add("aberto");
+  await carregarMinhasGravacoes();
+});
+document.getElementById("btn-fechar-minhas-gravacoes").addEventListener("click", () => {
+  document.getElementById("modal-minhas-gravacoes").classList.remove("aberto");
+});
+
+async function carregarMinhasGravacoes() {
+  const containerVazio = document.getElementById("minhas-gravacoes-vazio");
+  const containerDesativado = document.getElementById("minhas-gravacoes-desativado");
+  const container = document.getElementById("lista-minhas-gravacoes");
+  containerVazio.style.display = "none";
+  containerDesativado.style.display = "none";
+  container.innerHTML = "";
+
+  if (!sb) {
+    container.innerHTML = `<p class="sub" style="color:var(--tally);">Painel indisponível (Supabase não carregou).</p>`;
+    return;
+  }
+  if (!configGlobalAtual.permitir_ver_propria_gravacao) {
+    containerDesativado.style.display = "block";
+    return;
+  }
+
+  const meuId = await meuUsuarioIdPromise;
+  if (!meuId) {
+    container.innerHTML = `<p class="sub" style="color:var(--tally);">Não foi possível identificar este navegador. Recarrega a página e tenta de novo.</p>`;
+    return;
+  }
+
+  const { data: gravacoes, error } = await sb.from("historico_transmissoes")
+    .select("*")
+    .eq("usuario_id", meuId)
+    .not("gravacao_url", "is", null)
+    .order("iniciado_em", { ascending: false })
+    .limit(50);
+
+  if (error) {
+    container.innerHTML = `<p class="sub" style="color:var(--tally);">Erro ao carregar suas gravações: ${escapeHtml(error.message)}</p>`;
+    return;
+  }
+
+  if (!gravacoes || gravacoes.length === 0) {
+    containerVazio.style.display = "block";
+    return;
+  }
+
+  gravacoes.forEach((item) => {
+    const dataFormatada = new Date(item.iniciado_em).toLocaleString("pt-BR");
+    const duracaoTexto = item.duracao_segundos
+      ? Math.floor(item.duracao_segundos / 60) + "min " + (item.duracao_segundos % 60) + "s"
+      : "em andamento";
+
+    const div = document.createElement("div");
+    div.className = "item";
+    div.style.cssText = "display:flex; justify-content:space-between; align-items:center; gap:8px;";
+
+    const texto = document.createElement("span");
+    texto.textContent = `${item.nome_canal || item.sala_id} — ${dataFormatada} — ${duracaoTexto}`;
+    div.appendChild(texto);
+
+    const btnVer = document.createElement("button");
+    btnVer.textContent = "▶ Assistir";
+    btnVer.style.cssText = "background:var(--panel-raised);border:1px solid var(--tally);color:var(--tally);padding:4px 10px;border-radius:3px;font-size:11px;cursor:pointer;white-space:nowrap;";
+    btnVer.addEventListener("click", async () => {
+      const { data, error: erroUrl } = await sb.storage.from("gravacoes").createSignedUrl(item.gravacao_url, 3600);
+      if (erroUrl) { alert("Erro ao carregar essa gravação: " + erroUrl.message); return; }
+      window.open(data.signedUrl, "_blank");
+    });
+    div.appendChild(btnVer);
+
+    container.appendChild(div);
+  });
 }
 </script>
 
