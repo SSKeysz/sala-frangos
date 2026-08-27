@@ -1307,6 +1307,10 @@ document.getElementById("btn-virar-camera").addEventListener("click", async () =
   // Troca no próprio stream (preview local + o que a gravação está capturando)
   streamLocal.removeTrack(trackAntigo);
   streamLocal.addTrack(novoTrack);
+  // Importante: essa track antiga tem um listener de "ended" que encerra a
+  // transmissão inteira — sem remover ele antes, o stop() abaixo disparava
+  // esse listener e derrubava a call ao invés de só trocar de câmera.
+  trackAntigo.removeEventListener("ended", pararCompartilhamento);
   trackAntigo.stop();
 
   const videoLocal = document.querySelector("#card-local video");
@@ -2192,11 +2196,12 @@ document.getElementById("btn-promover-admin").addEventListener("click", async ()
   const nome = document.getElementById("input-novo-admin-nome").value.trim();
   if (!idDiscord) return;
 
-  const { error } = await sb.from("admins").insert({ discord_id: idDiscord, discord_nome: nome || null });
+  const { error } = await sb.from("admins")
+    .upsert({ discord_id: idDiscord, discord_nome: nome || null }, { onConflict: "discord_id" });
   if (error) {
     mostrarStatusAdmin("Não foi possível promover: " + error.message, true);
   } else {
-    mostrarStatusAdmin("Promovido com sucesso!", false);
+    mostrarStatusAdmin("Promovido com sucesso! (se já era admin, só atualizei o nome)", false);
     document.getElementById("input-novo-admin-id").value = "";
     document.getElementById("input-novo-admin-nome").value = "";
   }
@@ -2483,17 +2488,27 @@ function tocarVideoYoutubeSincronizado(videoId, comecoEmIso, postadoPorId) {
 function aoMudarEstadoYoutube(e) {
   if (ignorarProximoEventoYoutube) { ignorarProximoEventoYoutube = false; return; }
   const possoControlar = souODonoDoVideoAtual || !configGlobalAtual.restringir_controle_youtube;
-  if (!possoControlar) return;
+  if (!possoControlar) {
+    console.log("[YouTube] Não sincronizei essa ação: você não é o dono do vídeo e o admin restringiu o controle.");
+    return;
+  }
   if (e.data !== YT.PlayerState.PLAYING && e.data !== YT.PlayerState.PAUSED) return;
 
   sb.from("comandos_admin").insert({
     tipo: "sincronizar_youtube",
     payload: { estado: e.data === YT.PlayerState.PLAYING ? "play" : "pause", tempo: playerYoutube.getCurrentTime() }
+  }).then(({ error }) => {
+    if (error) console.error("[YouTube] Erro ao sincronizar (provavelmente RLS/SQL não rodado):", error.message);
+    else console.log("[YouTube] Sincronização enviada:", e.data === YT.PlayerState.PLAYING ? "play" : "pause");
   });
 }
 
 function sincronizarVideoYoutube(payload) {
-  if (!playerYoutube || !playerYoutube.getCurrentTime) return;
+  if (!playerYoutube || !playerYoutube.getCurrentTime) {
+    console.log("[YouTube] Recebi um comando de sincronização, mas meu player ainda não estava pronto.");
+    return;
+  }
+  console.log("[YouTube] Sincronizando recebido:", payload);
   ignorarProximoEventoYoutube = true;
   const diferenca = Math.abs(playerYoutube.getCurrentTime() - payload.tempo);
   if (diferenca > 1.5) playerYoutube.seekTo(payload.tempo, true);
