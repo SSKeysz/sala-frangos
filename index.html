@@ -460,6 +460,16 @@
     padding: 40px 20px;
   }
   #modal-minhas-gravacoes.aberto { display: flex; }
+  #modal-soundboard-membros, #modal-youtube-membros {
+    position: fixed; inset: 0;
+    background: rgba(8,9,11,0.85);
+    z-index: 150;
+    display: none;
+    align-items: flex-start; justify-content: center;
+    overflow-y: auto;
+    padding: 40px 20px;
+  }
+  #modal-soundboard-membros.aberto, #modal-youtube-membros.aberto { display: flex; }
   .painel-admin-caixa {
     background: var(--panel);
     border: 1px solid var(--line);
@@ -722,7 +732,9 @@
     <span class="canal-tag">CANAL <b id="nome-sala">------</b></span>
     <span class="voce-tag" id="tag-usuario"></span>
     <button class="btn-icone" id="btn-tema" title="Personalizar tema" aria-label="Personalizar tema">🎨</button>
-    <button class="btn-icone" id="btn-minhas-gravacoes" title="Minhas gravações" aria-label="Minhas gravações">🎬</button>
+    <button class="btn-icone" id="btn-minhas-gravacoes" title="Minhas gravações" aria-label="Minhas gravações" style="display:none;">🎬</button>
+    <button class="btn-icone" id="btn-soundboard-membros" title="Soundboard" aria-label="Soundboard">🎵</button>
+    <button class="btn-icone" id="btn-youtube-membros" title="Assistir YouTube junto" aria-label="Assistir YouTube junto" style="display:none;">📺</button>
     <button class="btn-icone" id="btn-admin" title="Painel administrativo" aria-label="Painel administrativo">🛠</button>
   </div>
 </header>
@@ -812,6 +824,18 @@
           <button class="btn-admin-acao" id="btn-tocar-youtube">Tocar pra todos</button>
         </div>
         <button class="btn-admin-acao" id="btn-parar-youtube" style="margin-top:10px; background:transparent; border:1px solid var(--tally); color:var(--tally);">⏹ Parar vídeo (todos)</button>
+
+        <div class="linha-toggle-admin" style="margin-top:14px; border-top:1px solid var(--line); padding-top:14px;">
+          <span>Permitir que membros também coloquem vídeos</span>
+          <input type="checkbox" id="toggle-youtube-membros">
+        </div>
+        <div class="linha-toggle-admin">
+          <span>Só quem colocou o link pode controlar (pausar/avançar)</span>
+          <input type="checkbox" id="toggle-restringir-controle-youtube">
+        </div>
+
+        <p class="sub" style="margin:14px 0 6px;">Últimos vídeos tocados</p>
+        <div class="lista-historico" id="lista-historico-youtube"></div>
       </div>
 
       <div class="secao-admin">
@@ -842,13 +866,35 @@
     <h2>🎬 Minhas gravações</h2>
     <p class="sub">Só você vê essa lista — cada gravação aqui é vinculada a este navegador.</p>
 
-    <div id="minhas-gravacoes-desativado" style="display:none;">
-      <p class="sub" style="line-height:1.5;">O dono do site desativou o acesso às próprias gravações no momento. Fala com ele se precisar de alguma.</p>
-    </div>
     <div id="minhas-gravacoes-vazio" style="display:none;">
       <p class="sub" style="line-height:1.5;">Nenhuma gravação sua ainda. Elas aparecem aqui depois que você transmite com a gravação de segurança ativa.</p>
     </div>
     <div class="lista-historico" id="lista-minhas-gravacoes"></div>
+  </div>
+</div>
+
+<div id="modal-soundboard-membros">
+  <div class="painel-admin-caixa">
+    <button class="fechar-painel-admin" id="btn-fechar-soundboard-membros">✕</button>
+    <h2>🎵 Soundboard</h2>
+    <p class="sub">Toca um som pra todo mundo ouvir agora.</p>
+
+    <div id="soundboard-membros-vazio" style="display:none;">
+      <p class="sub" style="line-height:1.5;">Nenhum som público disponível ainda.</p>
+    </div>
+    <div class="lista-historico" id="lista-soundboard-membros"></div>
+  </div>
+</div>
+
+<div id="modal-youtube-membros">
+  <div class="painel-admin-caixa">
+    <button class="fechar-painel-admin" id="btn-fechar-youtube-membros">✕</button>
+    <h2>📺 Assistir YouTube junto</h2>
+    <p class="sub">Cola o link e todo mundo assiste ao mesmo tempo que você.</p>
+    <div class="linha">
+      <input type="text" id="input-link-youtube-membro" placeholder="Cola o link do YouTube aqui">
+      <button class="btn-admin-acao" id="btn-tocar-youtube-membro">Tocar pra todos</button>
+    </div>
   </div>
 </div>
 
@@ -882,6 +928,7 @@
 <div class="barra">
   <button class="btn btn-transmitir" id="btn-compartilhar">▲ Transmitir minha tela</button>
   <button class="btn" id="btn-camera" style="background:var(--panel-raised); border:1px solid var(--line-strong); color:var(--text);">📷 Mostrar câmera</button>
+  <button class="btn" id="btn-virar-camera" style="display:none; background:var(--panel-raised); border:1px solid var(--line-strong); color:var(--text);">🔄 Virar câmera</button>
   <button class="btn btn-parar" id="btn-parar" disabled>■ Encerrar transmissão</button>
   <button class="btn btn-link" id="btn-copiar">⧉ Copiar link do canal</button>
 </div>
@@ -1027,6 +1074,7 @@ let meuSocketId = null;
 const peers = {};       // socketId -> RTCPeerConnection
 const nomesRemotos = {}; // socketId -> nome
 let streamLocal = null;
+let modoTransmissaoAtual = null; // "tela" ou "camera" — usado pra saber quando mostrar "virar câmera"
 
 const configIce = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
 
@@ -1210,6 +1258,7 @@ document.getElementById("btn-compartilhar").addEventListener("click", async () =
   }
   if (trackVideo) trackVideo.contentHint = fpsAlvo >= 60 ? "motion" : "detail";
 
+  modoTransmissaoAtual = "tela";
   await iniciarTransmissaoComStream(streamLocal);
 });
 
@@ -1218,7 +1267,7 @@ document.getElementById("btn-camera").addEventListener("click", async () => {
   try {
     // Áudio desligado por padrão: como todo mundo já está na call de voz do
     // Discord, ligar o microfone aqui também ia duplicar o próprio áudio.
-    streamCamera = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    streamCamera = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
   } catch (e) {
     if (e.name === "NotAllowedError") {
       alert("Permissão da câmera negada. Você pode liberar o acesso clicando no ícone de câmera/cadeado ao lado do endereço do site.");
@@ -1230,7 +1279,40 @@ document.getElementById("btn-camera").addEventListener("click", async () => {
     return;
   }
   streamLocal = streamCamera;
+  modoTransmissaoAtual = "camera";
   await iniciarTransmissaoComStream(streamLocal);
+});
+
+document.getElementById("btn-virar-camera").addEventListener("click", async () => {
+  if (!streamLocal || modoTransmissaoAtual !== "camera") return;
+  const trackAntigo = streamLocal.getVideoTracks()[0];
+  const facingAtual = trackAntigo.getSettings().facingMode;
+  const novoFacing = facingAtual === "environment" ? "user" : "environment";
+
+  let novoStream;
+  try {
+    novoStream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: novoFacing }, audio: false });
+  } catch (e) {
+    alert("Não consegui trocar de câmera: " + e.message);
+    return;
+  }
+  const novoTrack = novoStream.getVideoTracks()[0];
+
+  // Troca em todas as conexões já abertas com os outros participantes
+  Object.values(peers).forEach((pc) => {
+    const sender = pc.getSenders().find((s) => s.track && s.track.kind === "video");
+    if (sender) sender.replaceTrack(novoTrack);
+  });
+
+  // Troca no próprio stream (preview local + o que a gravação está capturando)
+  streamLocal.removeTrack(trackAntigo);
+  streamLocal.addTrack(novoTrack);
+  trackAntigo.stop();
+
+  const videoLocal = document.querySelector("#card-local video");
+  if (videoLocal) videoLocal.srcObject = streamLocal;
+
+  novoTrack.addEventListener("ended", pararCompartilhamento);
 });
 
 async function iniciarTransmissaoComStream(stream) {
@@ -1248,6 +1330,7 @@ async function iniciarTransmissaoComStream(stream) {
   document.getElementById("btn-compartilhar").disabled = true;
   document.getElementById("btn-camera").disabled = true;
   document.getElementById("btn-parar").disabled = false;
+  document.getElementById("btn-virar-camera").style.display = modoTransmissaoAtual === "camera" ? "" : "none";
 
   stream.getVideoTracks()[0].addEventListener("ended", pararCompartilhamento);
 }
@@ -1261,11 +1344,13 @@ function pararCompartilhamento() {
     streamLocal.getTracks().forEach((track) => track.stop());
     streamLocal = null;
   }
+  modoTransmissaoAtual = null;
   if (socket) socket.emit("parou-de-compartilhar");
   removerMonitor("local");
   document.getElementById("btn-compartilhar").disabled = false;
   document.getElementById("btn-camera").disabled = false;
   document.getElementById("btn-parar").disabled = true;
+  document.getElementById("btn-virar-camera").style.display = "none";
   document.getElementById("sel-resolucao").disabled = false;
   document.getElementById("sel-fps").disabled = false;
 }
@@ -1332,23 +1417,12 @@ function mostrarMonitorRemoto(id, stream) {
   }
   const videoEl = card.querySelector("video");
   videoEl.srcObject = stream;
+  videoEl.play().catch(() => {}); // navegador já libera autoplay depois que a pessoa interagiu com a página (nome, botões etc.)
 
-  // Fallback: se o navegador bloquear autoplay com som, pede um clique
-  const tentativa = videoEl.play();
-  if (tentativa && tentativa.catch) {
-    tentativa.catch(() => {
-      if (!card.querySelector(".aviso-audio")) {
-        const aviso = document.createElement("div");
-        aviso.className = "aviso-audio";
-        aviso.innerHTML = "<span>▶ Clique para ativar o áudio</span>";
-        aviso.addEventListener("click", () => {
-          videoEl.play();
-          aviso.remove();
-        });
-        card.querySelector(".tela").appendChild(aviso);
-      }
-    });
-  }
+  // Câmera não manda áudio (o microfone fica desligado de propósito), então não faz
+  // sentido mostrar um controle de volume que não abaixa/aumenta nada de verdade.
+  const controleVolume = card.querySelector(".controle-volume");
+  if (controleVolume) controleVolume.style.display = stream.getAudioTracks().length > 0 ? "" : "none";
 
   atualizarVazio();
   atualizarContadoresAssistindo();
@@ -1667,7 +1741,7 @@ try {
   console.error("Painel admin: falha ao carregar Supabase.", e);
 }
 
-let configGlobalAtual = { permitir_mutar_sons: true, gravacao_ativa: false, permitir_ver_propria_gravacao: false };
+let configGlobalAtual = { permitir_mutar_sons: true, gravacao_ativa: false, permitir_ver_propria_gravacao: false, permitir_youtube_membros: false, restringir_controle_youtube: false };
 let souAdminAgora = false;
 let meuDiscordIdCache = null;
 
@@ -1678,6 +1752,21 @@ let meuDiscordIdCache = null;
 let meuUsuarioIdPromise = null;
 async function garantirUsuarioAnonimo() {
   if (!sb) return null;
+
+  // Se a URL tem os parâmetros de retorno do login do Discord, espera o
+  // Supabase terminar de processar esse login ANTES de decidir se precisa
+  // criar uma sessão anônima — senão essa checagem "vence a corrida" e
+  // atropela o login que estava em andamento.
+  const voltandoDoDiscord = window.location.hash.includes("access_token") || window.location.search.includes("code=");
+  if (voltandoDoDiscord) {
+    await new Promise((resolve) => {
+      const { data: assinatura } = sb.auth.onAuthStateChange((evento, session) => {
+        if (session) { assinatura.subscription.unsubscribe(); resolve(); }
+      });
+      setTimeout(resolve, 4000); // segurança: nunca trava a página pra sempre
+    });
+  }
+
   const { data: { session } } = await sb.auth.getSession();
   if (session) return session.user.id;
   const { data, error } = await sb.auth.signInAnonymously();
@@ -1769,6 +1858,12 @@ function aplicarConfigGlobal(cfg) {
   }
   const slider = document.getElementById("volume-som-forcado");
   if (slider) slider.min = cfg.permitir_mutar_sons ? "0" : "50";
+
+  const btnGravacoes = document.getElementById("btn-minhas-gravacoes");
+  if (btnGravacoes) btnGravacoes.style.display = cfg.permitir_ver_propria_gravacao ? "" : "none";
+
+  const btnYoutubeMembros = document.getElementById("btn-youtube-membros");
+  if (btnYoutubeMembros) btnYoutubeMembros.style.display = (cfg.permitir_youtube_membros && !souAdminAgora) ? "" : "none";
 }
 
 carregarConfigGlobalInicial();
@@ -1841,11 +1936,15 @@ function tratarComandoAdmin(cmd) {
   }
 
   if (cmd.tipo === "tocar_youtube") {
-    tocarVideoYoutubeSincronizado(cmd.payload.videoId, cmd.payload.comeco_em);
+    tocarVideoYoutubeSincronizado(cmd.payload.videoId, cmd.payload.comeco_em, cmd.payload.postado_por);
   }
 
   if (cmd.tipo === "parar_youtube") {
     pararVideoYoutube();
+  }
+
+  if (cmd.tipo === "sincronizar_youtube") {
+    sincronizarVideoYoutube(cmd.payload);
   }
 }
 
@@ -1983,10 +2082,13 @@ async function abrirPainelCompleto() {
   document.getElementById("toggle-gravacao-global").checked = !!configGlobalAtual.gravacao_ativa;
   document.getElementById("toggle-permitir-mutar").checked = !!configGlobalAtual.permitir_mutar_sons;
   document.getElementById("toggle-ver-propria-gravacao").checked = !!configGlobalAtual.permitir_ver_propria_gravacao;
+  document.getElementById("toggle-youtube-membros").checked = !!configGlobalAtual.permitir_youtube_membros;
+  document.getElementById("toggle-restringir-controle-youtube").checked = !!configGlobalAtual.restringir_controle_youtube;
   atualizarTextoStatusGravacao();
 
   carregarListaSons();
   carregarHistorico();
+  carregarHistoricoYoutube();
 }
 
 function atualizarTextoStatusGravacao() {
@@ -2044,6 +2146,34 @@ document.getElementById("toggle-ver-propria-gravacao").addEventListener("change"
   configGlobalAtual.permitir_ver_propria_gravacao = e.target.checked;
   mostrarStatusAdmin(e.target.checked ? "Membros já podem ver a própria gravação." : "Acesso às gravações pessoais desativado.", false);
 });
+
+document.getElementById("toggle-youtube-membros").addEventListener("change", async (e) => {
+  const { error } = await sb.from("configuracoes_globais").update({ permitir_youtube_membros: e.target.checked }).eq("id", 1);
+  if (error) { mostrarStatusAdmin("Erro: " + error.message, true); e.target.checked = !e.target.checked; return; }
+  configGlobalAtual.permitir_youtube_membros = e.target.checked;
+  mostrarStatusAdmin(e.target.checked ? "Membros já podem colocar vídeos." : "Só admin pode colocar vídeos agora.", false);
+});
+
+document.getElementById("toggle-restringir-controle-youtube").addEventListener("change", async (e) => {
+  const { error } = await sb.from("configuracoes_globais").update({ restringir_controle_youtube: e.target.checked }).eq("id", 1);
+  if (error) { mostrarStatusAdmin("Erro: " + error.message, true); e.target.checked = !e.target.checked; return; }
+  configGlobalAtual.restringir_controle_youtube = e.target.checked;
+  mostrarStatusAdmin(e.target.checked ? "Só quem postou o link controla o vídeo agora." : "Todo mundo pode controlar o vídeo.", false);
+});
+
+async function carregarHistoricoYoutube() {
+  const container = document.getElementById("lista-historico-youtube");
+  const { data: videos, error } = await sb.from("historico_youtube")
+    .select("*").order("tocado_em", { ascending: false }).limit(20);
+
+  if (error) { container.innerHTML = `<p class="sub" style="color:var(--tally);">Erro: ${escapeHtml(error.message)}</p>`; return; }
+  if (!videos || videos.length === 0) { container.innerHTML = `<p class="sub">Nenhum vídeo tocado ainda.</p>`; return; }
+
+  container.innerHTML = videos.map((v) => {
+    const quando = new Date(v.tocado_em).toLocaleString("pt-BR");
+    return `<div class="item">${escapeHtml(v.nome_exibido)} tocou <a href="${escapeHtml(v.link_original)}" target="_blank" style="color:var(--tally);">${escapeHtml(v.link_original)}</a> — ${quando}</div>`;
+  }).join("");
+}
 
 document.getElementById("btn-parar-tudo").addEventListener("click", async () => {
   const { error } = await sb.from("comandos_admin").insert({ tipo: "parar_transmissoes", payload: {} });
@@ -2238,18 +2368,12 @@ document.getElementById("btn-fechar-minhas-gravacoes").addEventListener("click",
 
 async function carregarMinhasGravacoes() {
   const containerVazio = document.getElementById("minhas-gravacoes-vazio");
-  const containerDesativado = document.getElementById("minhas-gravacoes-desativado");
   const container = document.getElementById("lista-minhas-gravacoes");
   containerVazio.style.display = "none";
-  containerDesativado.style.display = "none";
   container.innerHTML = "";
 
   if (!sb) {
     container.innerHTML = `<p class="sub" style="color:var(--tally);">Painel indisponível (Supabase não carregou).</p>`;
-    return;
-  }
-  if (!configGlobalAtual.permitir_ver_propria_gravacao) {
-    containerDesativado.style.display = "block";
     return;
   }
 
@@ -2307,6 +2431,8 @@ async function carregarMinhasGravacoes() {
 // ----- "Assistir YouTube junto" (sincronizado via comandos_admin) -----
 let playerYoutube = null;
 let youtubeApiPronta = false;
+let souODonoDoVideoAtual = false;
+let ignorarProximoEventoYoutube = false;
 window.onYouTubeIframeAPIReady = () => { youtubeApiPronta = true; };
 
 function extrairYoutubeId(url) {
@@ -2315,9 +2441,13 @@ function extrairYoutubeId(url) {
   return match ? match[1] : null;
 }
 
-function tocarVideoYoutubeSincronizado(videoId, comecoEmIso) {
+function tocarVideoYoutubeSincronizado(videoId, comecoEmIso, postadoPorId) {
   document.getElementById("widget-youtube-ativo").classList.add("visivel");
   const segundosDecorridos = Math.max(0, (Date.now() - new Date(comecoEmIso).getTime()) / 1000);
+
+  meuUsuarioIdPromise.then((meuId) => {
+    souODonoDoVideoAtual = !!meuId && meuId === postadoPorId;
+  });
 
   const iniciar = () => {
     if (playerYoutube && playerYoutube.loadVideoById) {
@@ -2326,7 +2456,10 @@ function tocarVideoYoutubeSincronizado(videoId, comecoEmIso) {
       playerYoutube = new YT.Player("player-youtube-container", {
         videoId,
         playerVars: { autoplay: 1, start: Math.floor(segundosDecorridos) },
-        events: { onReady: (e) => e.target.playVideo() }
+        events: {
+          onReady: (e) => e.target.playVideo(),
+          onStateChange: aoMudarEstadoYoutube
+        }
       });
     }
   };
@@ -2344,6 +2477,29 @@ function tocarVideoYoutubeSincronizado(videoId, comecoEmIso) {
   }
 }
 
+// Quando EU mexo no player (pausar, dar play, avançar/voltar), propaga isso pros
+// outros — a não ser que quem admin tenha restringido esse controle só a quem
+// colocou o link, e eu não seja essa pessoa.
+function aoMudarEstadoYoutube(e) {
+  if (ignorarProximoEventoYoutube) { ignorarProximoEventoYoutube = false; return; }
+  const possoControlar = souODonoDoVideoAtual || !configGlobalAtual.restringir_controle_youtube;
+  if (!possoControlar) return;
+  if (e.data !== YT.PlayerState.PLAYING && e.data !== YT.PlayerState.PAUSED) return;
+
+  sb.from("comandos_admin").insert({
+    tipo: "sincronizar_youtube",
+    payload: { estado: e.data === YT.PlayerState.PLAYING ? "play" : "pause", tempo: playerYoutube.getCurrentTime() }
+  });
+}
+
+function sincronizarVideoYoutube(payload) {
+  if (!playerYoutube || !playerYoutube.getCurrentTime) return;
+  ignorarProximoEventoYoutube = true;
+  const diferenca = Math.abs(playerYoutube.getCurrentTime() - payload.tempo);
+  if (diferenca > 1.5) playerYoutube.seekTo(payload.tempo, true);
+  if (payload.estado === "play") playerYoutube.playVideo(); else playerYoutube.pauseVideo();
+}
+
 function pararVideoYoutube() {
   document.getElementById("widget-youtube-ativo").classList.remove("visivel");
   if (playerYoutube && playerYoutube.stopVideo) playerYoutube.stopVideo();
@@ -2355,27 +2511,107 @@ document.getElementById("btn-fechar-youtube").addEventListener("click", () => {
   if (playerYoutube && playerYoutube.pauseVideo) playerYoutube.pauseVideo();
 });
 
-document.getElementById("btn-tocar-youtube").addEventListener("click", async () => {
-  const link = document.getElementById("input-link-youtube").value.trim();
+async function tocarYoutubeParaTodos(link) {
   const videoId = extrairYoutubeId(link);
-  if (!videoId) { mostrarStatusAdmin("Não reconheci esse link do YouTube.", true); return; }
+  if (!videoId) return { erro: "Não reconheci esse link do YouTube." };
 
+  const meuId = await meuUsuarioIdPromise;
   // Pequena folga (1.5s) pra dar tempo de todo mundo receber o comando antes do vídeo começar de verdade
   const comecoEm = new Date(Date.now() + 1500).toISOString();
   const { error } = await sb.from("comandos_admin").insert({
     tipo: "tocar_youtube",
-    payload: { videoId, comeco_em: comecoEm }
+    payload: { videoId, comeco_em: comecoEm, postado_por: meuId }
   });
-  if (error) { mostrarStatusAdmin("Erro ao tocar vídeo: " + error.message, true); return; }
+  if (error) return { erro: error.message };
+
+  // Log separado, só pra admin ver depois quem tocou o quê e quando
+  await sb.from("historico_youtube").insert({
+    link_original: link,
+    video_id: videoId,
+    nome_exibido: meuNome
+  }).then(({ error: erroLog }) => { if (erroLog) console.warn("Não consegui registrar no histórico de YouTube:", erroLog.message); });
+
+  return { ok: true };
+}
+
+document.getElementById("btn-tocar-youtube").addEventListener("click", async () => {
+  const input = document.getElementById("input-link-youtube");
+  const resultado = await tocarYoutubeParaTodos(input.value.trim());
+  if (resultado.erro) { mostrarStatusAdmin("Erro ao tocar vídeo: " + resultado.erro, true); return; }
   mostrarStatusAdmin("Vídeo tocando pra todos.", false);
-  document.getElementById("input-link-youtube").value = "";
+  input.value = "";
 });
 
 document.getElementById("btn-parar-youtube").addEventListener("click", async () => {
   const { error } = await sb.from("comandos_admin").insert({ tipo: "parar_youtube", payload: {} });
   if (error) mostrarStatusAdmin("Erro ao parar vídeo: " + error.message, true);
 });
+
+// ----- "📺 Assistir YouTube junto" — versão pra membros comuns (só aparece se o admin permitir) -----
+document.getElementById("btn-youtube-membros").addEventListener("click", () => {
+  document.getElementById("modal-youtube-membros").classList.add("aberto");
+});
+document.getElementById("btn-fechar-youtube-membros").addEventListener("click", () => {
+  document.getElementById("modal-youtube-membros").classList.remove("aberto");
+});
+document.getElementById("btn-tocar-youtube-membro").addEventListener("click", async () => {
+  const input = document.getElementById("input-link-youtube-membro");
+  const btn = document.getElementById("btn-tocar-youtube-membro");
+  btn.disabled = true;
+  const resultado = await tocarYoutubeParaTodos(input.value.trim());
+  btn.disabled = false;
+  if (resultado.erro) { alert("Erro ao tocar vídeo: " + resultado.erro); return; }
+  input.value = "";
+  document.getElementById("modal-youtube-membros").classList.remove("aberto");
+});
+
+// ----- "🎵 Soundboard" — versão pra membros comuns (só toca sons marcados como públicos) -----
+document.getElementById("btn-soundboard-membros").addEventListener("click", async () => {
+  document.getElementById("modal-soundboard-membros").classList.add("aberto");
+  await carregarSoundboardMembros();
+});
+document.getElementById("btn-fechar-soundboard-membros").addEventListener("click", () => {
+  document.getElementById("modal-soundboard-membros").classList.remove("aberto");
+});
+
+async function carregarSoundboardMembros() {
+  const containerVazio = document.getElementById("soundboard-membros-vazio");
+  const container = document.getElementById("lista-soundboard-membros");
+  containerVazio.style.display = "none";
+  container.innerHTML = "";
+
+  const { data: sons, error } = await sb.from("sons_soundboard").select("*").eq("publico", true).order("nome");
+  if (error) {
+    container.innerHTML = `<p class="sub" style="color:var(--tally);">Erro ao carregar: ${escapeHtml(error.message)}</p>`;
+    return;
+  }
+  if (!sons || sons.length === 0) {
+    containerVazio.style.display = "block";
+    return;
+  }
+
+  sons.forEach((som) => {
+    const div = document.createElement("div");
+    div.className = "item";
+    div.style.cssText = "display:flex; justify-content:space-between; align-items:center; gap:8px;";
+    div.innerHTML = `<span>${escapeHtml(som.nome)}</span>`;
+
+    const btn = document.createElement("button");
+    btn.textContent = "▶ Tocar pra todos";
+    btn.style.cssText = "background:var(--panel-raised);border:1px solid var(--tally);color:var(--tally);padding:4px 10px;border-radius:3px;font-size:11px;cursor:pointer;white-space:nowrap;";
+    btn.addEventListener("click", async () => {
+      const { error: erroTocar } = await sb.from("comandos_admin").insert({
+        tipo: "tocar_som",
+        payload: { url: som.arquivo_url, nome: som.nome }
+      });
+      if (erroTocar) alert("Erro ao tocar som: " + erroTocar.message);
+    });
+    div.appendChild(btn);
+    container.appendChild(div);
+  });
+}
 </script>
+
 
 </body>
 </html>
