@@ -354,8 +354,8 @@
       radial-gradient(circle at top right, rgba(168,85,247,0.20), transparent 55%),
       url('img/frango-hero.webp');
     background-repeat: no-repeat, no-repeat;
-    background-position: 0 0, top -20px right -20px;
-    background-size: auto, 140px;
+    background-position: 0 0, top 34px right -20px;
+    background-size: auto, 110px;
   }
   body.tema-frango ::selection { background: rgba(255,140,26,0.35); }
   body.tema-frango #modal-nome .caixa::before {
@@ -584,8 +584,11 @@
   .lista-historico { max-height: 220px; overflow-y: auto; font-size: 12px; font-family: var(--font-mono); }
   .lista-historico .item { padding: 8px 0; border-bottom: 1px solid var(--line); color: var(--text-dim); }
   .fechar-painel-admin {
-    float: right; background: none; border: none; color: var(--text-faint);
-    font-size: 20px; cursor: pointer; margin-top: -6px;
+    float: right; background: var(--panel); border: 1px solid var(--line-strong); color: var(--text);
+    font-size: 16px; cursor: pointer; margin-top: -6px;
+    width: 28px; height: 28px; border-radius: 50%;
+    display: flex; align-items: center; justify-content: center;
+    position: relative; z-index: 5;
   }
   .item-som {
     display: flex; align-items: center; justify-content: space-between;
