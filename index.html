@@ -576,6 +576,12 @@
     text-align: right;
   }
 
+  /* Em celulares/tablets (tela sensível ao toque, sem mouse), o volume do
+     próprio aparelho já resolve isso — o slider aqui não ajuda em nada. */
+  @media (hover: none) and (pointer: coarse) {
+    .controle-volume { display: none; }
+  }
+
   #vazio {
     text-align: center;
     padding: 80px 20px;
@@ -1256,7 +1262,7 @@ document.getElementById("btn-camera").addEventListener("click", async () => {
   try {
     // Áudio desligado por padrão: como todo mundo já está na call de voz do
     // Discord, ligar o microfone aqui também ia duplicar o próprio áudio.
-    streamCamera = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
+    streamCamera = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
   } catch (e) {
     if (e.name === "NotAllowedError") {
       alert("Permissão da câmera negada. Você pode liberar o acesso clicando no ícone de câmera/cadeado ao lado do endereço do site.");
@@ -1781,6 +1787,16 @@ async function garantirUsuarioAnonimo() {
   return data.user.id;
 }
 if (sb) meuUsuarioIdPromise = garantirUsuarioAnonimo();
+
+// Identidade separada, só pra "quem postou esse vídeo do YouTube" — de propósito
+// NÃO usa a conta/login da pessoa, e sim algo único por aba/sessão do navegador.
+// Assim, mesmo logado como admin em 2 aparelhos ao mesmo tempo, cada aparelho
+// conta como "alguém diferente" pra fins de quem pode controlar o vídeo.
+let idSessaoYoutube = sessionStorage.getItem("id_sessao_youtube");
+if (!idSessaoYoutube) {
+  idSessaoYoutube = (crypto.randomUUID ? crypto.randomUUID() : Date.now() + "-" + Math.random());
+  sessionStorage.setItem("id_sessao_youtube", idSessaoYoutube);
+}
 
 // Pequeno "toast" de status dentro do painel — sempre visível, nunca silencioso
 function mostrarStatusAdmin(mensagem, ehErro) {
@@ -2470,9 +2486,7 @@ function tocarVideoYoutubeSincronizado(videoId, comecoEmIso, postadoPorId) {
   document.getElementById("widget-youtube-ativo").classList.add("visivel");
   const segundosDecorridos = Math.max(0, (Date.now() - new Date(comecoEmIso).getTime()) / 1000);
 
-  meuUsuarioIdPromise.then((meuId) => {
-    souODonoDoVideoAtual = !!meuId && meuId === postadoPorId;
-  });
+  souODonoDoVideoAtual = idSessaoYoutube === postadoPorId;
 
   const iniciar = () => {
     if (playerYoutube && playerYoutube.loadVideoById) {
@@ -2581,11 +2595,12 @@ async function tocarYoutubeParaTodos(link) {
   const comecoEm = new Date(Date.now() + 1500).toISOString();
   const { error } = await sb.rpc("inserir_comando_membro", {
     p_tipo: "tocar_youtube",
-    p_payload: { videoId, comeco_em: comecoEm, postado_por: meuId }
+    p_payload: { videoId, comeco_em: comecoEm, postado_por: idSessaoYoutube }
   });
   if (error) return { erro: error.message };
 
   // Log separado, só pra admin ver depois quem tocou o quê e quando
+  // (aqui sim usa a identidade "de verdade" da pessoa, só pro histórico)
   await sb.from("historico_youtube").insert({
     link_original: link,
     video_id: videoId,
