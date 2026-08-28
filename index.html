@@ -1881,7 +1881,25 @@ if (sb) {
 }
 
 // ----- Comandos do admin em tempo real -----
-let audioForcadoAtual = null;
+// Um único elemento de áudio, reutilizado sempre — criar um novo a cada som
+// faz o celular bloquear o autoplay de novo a cada vez (cada objeto Audio()
+// novo perde a liberação que o navegador deu no primeiro clique da pessoa).
+const audioForcadoAtual = new Audio();
+let audioDesbloqueado = false;
+
+function desbloquearAudioForcado() {
+  if (audioDesbloqueado) return;
+  audioDesbloqueado = true;
+  // Toca e pausa imediatamente, silenciosamente — isso "autoriza" esse mesmo
+  // elemento a tocar áudio programado mais tarde, sem exigir novo clique.
+  audioForcadoAtual.volume = 0;
+  const tentativa = audioForcadoAtual.play();
+  if (tentativa && tentativa.then) {
+    tentativa.then(() => { audioForcadoAtual.pause(); audioForcadoAtual.volume = 1; }).catch(() => { audioForcadoAtual.volume = 1; });
+  }
+}
+document.getElementById("btn-confirmar-nome").addEventListener("click", desbloquearAudioForcado);
+document.addEventListener("click", desbloquearAudioForcado, { once: true });
 
 if (sb) {
   sb.channel("comandos-admin-realtime")
@@ -1914,8 +1932,9 @@ function tratarComandoAdmin(cmd) {
   }
 
   if (cmd.tipo === "tocar_som") {
-    if (audioForcadoAtual) audioForcadoAtual.pause();
-    audioForcadoAtual = new Audio(cmd.payload.url);
+    audioForcadoAtual.pause();
+    audioForcadoAtual.src = cmd.payload.url;
+    audioForcadoAtual.currentTime = 0;
     audioForcadoAtual.volume = 1;
     audioForcadoAtual.play().catch((e) => console.error("Não consegui tocar o som:", e));
 
@@ -1927,11 +1946,12 @@ function tratarComandoAdmin(cmd) {
     document.getElementById("valor-volume-som").textContent = "100%";
     widget.classList.add("visivel");
 
-    audioForcadoAtual.addEventListener("ended", () => widget.classList.remove("visivel"));
+    audioForcadoAtual.onended = () => widget.classList.remove("visivel");
   }
 
   if (cmd.tipo === "parar_som") {
-    if (audioForcadoAtual) { audioForcadoAtual.pause(); audioForcadoAtual = null; }
+    audioForcadoAtual.pause();
+    audioForcadoAtual.removeAttribute("src");
     document.getElementById("widget-som-ativo").classList.remove("visivel");
   }
 
@@ -2521,40 +2541,30 @@ function pararVideoYoutube() {
 }
 
 // O evento onStateChange do YouTube não dispara de forma confiável quando
-// alguém arrasta a barrinha de progresso (só em play/pause). Por isso,
-// checamos periodicamente se o tempo "pulou" mais do que o esperado.
-let ultimoTempoConhecidoYt = null;
-let ultimaChecagemYt = null;
-
+// alguém arrasta a barrinha de progresso (só em play/pause). Além disso, se
+// um comando de pausa/play se perder na rede, quem recebeu nunca fica sabendo.
+// Por isso, quem pode controlar reafirma o estado atual periodicamente —
+// isso corrige tanto "pulos" quanto pausas que às vezes não chegavam.
 setInterval(() => {
-  if (!playerYoutube || !playerYoutube.getCurrentTime || typeof playerYoutube.getPlayerState !== "function") return;
-  const possoControlar = souODonoDoVideoAtual || !configGlobalAtual.restringir_controle_youtube;
-  if (!possoControlar) return;
-  if (playerYoutube.getPlayerState() !== YT.PlayerState.PLAYING) return;
+  if (!playerYoutube || typeof playerYoutube.getPlayerState !== "function") return;
+  // Só o dono do vídeo manda o "heartbeat" de sincronização — se todo mundo
+  // mandasse ao mesmo tempo (quando o controle não é restrito), viraria uma
+  // bagunça de comandos brigando entre si.
+  if (!souODonoDoVideoAtual) return;
 
-  const agora = Date.now();
-  const tempoAtual = playerYoutube.getCurrentTime();
+  const estadoAtual = playerYoutube.getPlayerState();
+  if (estadoAtual !== YT.PlayerState.PLAYING && estadoAtual !== YT.PlayerState.PAUSED) return;
 
-  if (ultimoTempoConhecidoYt !== null) {
-    const segundosEsperados = (agora - ultimaChecagemYt) / 1000;
-    const tempoEsperado = ultimoTempoConhecidoYt + segundosEsperados;
-    const diferenca = Math.abs(tempoAtual - tempoEsperado);
-
-    // Diferença grande = alguém arrastou a barra (não é só a variação normal do intervalo)
-    if (diferenca > 2.5) {
-      ignorarProximoEventoYoutube = true;
-      sb.rpc("inserir_comando_membro", {
-        p_tipo: "sincronizar_youtube",
-        p_payload: { estado: "play", tempo: tempoAtual }
-      }).then(({ error }) => {
-        if (error) console.error("[YouTube] Erro ao sincronizar pulo:", error.message);
-      });
+  sb.rpc("inserir_comando_membro", {
+    p_tipo: "sincronizar_youtube",
+    p_payload: {
+      estado: estadoAtual === YT.PlayerState.PLAYING ? "play" : "pause",
+      tempo: playerYoutube.getCurrentTime()
     }
-  }
-
-  ultimoTempoConhecidoYt = tempoAtual;
-  ultimaChecagemYt = agora;
-}, 2000);
+  }).then(({ error }) => {
+    if (error) console.error("[YouTube] Erro no heartbeat de sincronização:", error.message);
+  });
+}, 3000);
 
 document.getElementById("btn-fechar-youtube").addEventListener("click", () => {
   // Fecha só pro navegador de quem clicou — não afeta os outros participantes
