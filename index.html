@@ -1426,6 +1426,15 @@ function mostrarMonitorRemoto(id, stream) {
       videoEl.srcObject = null;
       videoEl.srcObject = stream;
       videoEl.play().catch(() => {});
+
+      // Se mesmo assim continuar preto depois de mais 3s, a reconexão simples
+      // não resolveu — força a conexão inteira com essa pessoa a se refazer.
+      setTimeout(() => {
+        if (videoEl.videoWidth === 0 && peers[id] && peers[id].restartIce) {
+          console.warn("Vídeo travado com", id, "— forçando reconexão (ICE restart).");
+          peers[id].restartIce();
+        }
+      }, 3000);
     }
   }, 3000);
 
@@ -1887,6 +1896,11 @@ function aplicarConfigGlobal(cfg) {
 }
 
 carregarConfigGlobalInicial();
+
+// Reforço: além do tempo real, confere direto no banco a cada 15s — se o
+// Realtime perder algum aviso de mudança (acontece de vez em quando), isso
+// garante que ninguém fica preso numa configuração desatualizada por muito tempo.
+setInterval(carregarConfigGlobalInicial, 15000);
 
 if (sb) {
   sb.channel("config-global-realtime")
@@ -2519,6 +2533,11 @@ function tocarVideoYoutubeSincronizado(videoId, comecoEmIso, postadoPorId) {
 // Quando EU mexo no player (pausar, dar play, avançar/voltar), propaga isso pros
 // outros — a não ser que quem admin tenha restringido esse controle só a quem
 // colocou o link, e eu não seja essa pessoa.
+// Guarda o último estado combinado (seja por ação local ou por sincronização
+// recebida) — o heartbeat usa ISSO, não uma releitura ao vivo do player, pra
+// nunca correr o risco de pegar um valor "no meio da troca" e desfazer a ação.
+let ultimoEstadoConhecidoYt = null; // "play" | "pause"
+
 function aoMudarEstadoYoutube(e) {
   if (e.data !== YT.PlayerState.PLAYING && e.data !== YT.PlayerState.PAUSED) return;
   if (ignorarProximoEventoYoutube) { ignorarProximoEventoYoutube = false; return; }
@@ -2528,12 +2547,15 @@ function aoMudarEstadoYoutube(e) {
     return;
   }
 
+  const estado = e.data === YT.PlayerState.PLAYING ? "play" : "pause";
+  ultimoEstadoConhecidoYt = estado;
+
   sb.rpc("inserir_comando_membro", {
     p_tipo: "sincronizar_youtube",
-    p_payload: { estado: e.data === YT.PlayerState.PLAYING ? "play" : "pause", tempo: playerYoutube.getCurrentTime() }
+    p_payload: { estado, tempo: playerYoutube.getCurrentTime() }
   }).then(({ error }) => {
     if (error) console.error("[YouTube] Erro ao sincronizar:", error.message);
-    else console.log("[YouTube] Sincronização enviada:", e.data === YT.PlayerState.PLAYING ? "play" : "pause");
+    else console.log("[YouTube] Sincronização enviada:", estado);
   });
 }
 
@@ -2544,6 +2566,7 @@ function sincronizarVideoYoutube(payload) {
   }
   console.log("[YouTube] Sincronizando recebido:", payload);
   ignorarProximoEventoYoutube = true;
+  ultimoEstadoConhecidoYt = payload.estado; // mesmo se eu for o dono, isso conta como o mais recente
   const diferenca = Math.abs(playerYoutube.getCurrentTime() - payload.tempo);
   if (diferenca > 1.5) playerYoutube.seekTo(payload.tempo, true);
   if (payload.estado === "play") playerYoutube.playVideo(); else playerYoutube.pauseVideo();
@@ -2552,33 +2575,26 @@ function sincronizarVideoYoutube(payload) {
 function pararVideoYoutube() {
   document.getElementById("widget-youtube-ativo").classList.remove("visivel");
   if (playerYoutube && playerYoutube.stopVideo) playerYoutube.stopVideo();
+  ultimoEstadoConhecidoYt = null;
 }
 
 // O evento onStateChange do YouTube não dispara de forma confiável quando
 // alguém arrasta a barrinha de progresso (só em play/pause). Além disso, se
 // um comando de pausa/play se perder na rede, quem recebeu nunca fica sabendo.
-// Por isso, quem pode controlar reafirma o estado atual periodicamente —
-// isso corrige tanto "pulos" quanto pausas que às vezes não chegavam.
+// Por isso, o dono reafirma o ÚLTIMO ESTADO CONHECIDO periodicamente — nunca
+// relê o player ao vivo aqui, pra não correr risco de pegar um valor no meio
+// de uma troca e desfazer a ação de alguém sem querer.
 setInterval(() => {
-  if (!playerYoutube || typeof playerYoutube.getPlayerState !== "function") return;
-  // Só o dono do vídeo manda o "heartbeat" de sincronização — se todo mundo
-  // mandasse ao mesmo tempo (quando o controle não é restrito), viraria uma
-  // bagunça de comandos brigando entre si.
-  if (!souODonoDoVideoAtual) return;
-
-  const estadoAtual = playerYoutube.getPlayerState();
-  if (estadoAtual !== YT.PlayerState.PLAYING && estadoAtual !== YT.PlayerState.PAUSED) return;
+  if (!playerYoutube || !souODonoDoVideoAtual || !ultimoEstadoConhecidoYt) return;
 
   sb.rpc("inserir_comando_membro", {
     p_tipo: "sincronizar_youtube",
-    p_payload: {
-      estado: estadoAtual === YT.PlayerState.PLAYING ? "play" : "pause",
-      tempo: playerYoutube.getCurrentTime()
-    }
+    p_payload: { estado: ultimoEstadoConhecidoYt, tempo: playerYoutube.getCurrentTime() }
   }).then(({ error }) => {
     if (error) console.error("[YouTube] Erro no heartbeat de sincronização:", error.message);
   });
 }, 3000);
+
 
 document.getElementById("btn-fechar-youtube").addEventListener("click", () => {
   // Fecha só pro navegador de quem clicou — não afeta os outros participantes
