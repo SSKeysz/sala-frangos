@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Central de Transmissão</title>
+<link rel="icon" type="image/webp" href="img/frango-logo.webp">
 <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.js"></script>
 <script src="https://www.youtube.com/iframe_api"></script>
@@ -290,14 +291,75 @@
 
   /* ===== TEMA FRANGO ===== */
   body.tema-frango {
-    --bg: #1c1712;
-    --panel: #2b2119;
-    --panel-raised: #362a1f;
-    --line: #4a3826;
-    --line-strong: #614a34;
-    --text: #f5ead9;
-    --text-dim: #c9ad8c;
-    --text-faint: #8c7358;
+    --bg: #0d0714;
+    --panel: #1a0f24;
+    --panel-raised: #241432;
+    --line: #3a2350;
+    --line-strong: #6b3fa0;
+    --text: #f5e6d3;
+    --text-dim: #c9a6e8;
+    --text-faint: #8a6ba8;
+    --tally: #ff8c1a;
+    --tally-dim: #4a2b10;
+    --signal: #ffb84d;
+    --signal-dim: #4a3410;
+  }
+  body.tema-frango::before {
+    content: "";
+    position: fixed; inset: 0;
+    background:
+      radial-gradient(ellipse 60% 40% at 15% 0%, rgba(168,85,247,0.16), transparent 60%),
+      radial-gradient(ellipse 60% 40% at 85% 100%, rgba(255,140,26,0.12), transparent 60%);
+    pointer-events: none;
+    z-index: 0;
+  }
+  body.tema-frango header {
+    border-bottom: 1px solid var(--line-strong);
+    background: linear-gradient(180deg, rgba(168,85,247,0.10), transparent);
+  }
+  body.tema-frango .marca h1::before {
+    content: "";
+    display: inline-block;
+    width: 26px; height: 26px;
+    background: url('img/frango-logo.webp') center/cover;
+    border-radius: 6px;
+    margin-right: 8px;
+    vertical-align: middle;
+    box-shadow: 0 0 12px rgba(255,140,26,0.55);
+  }
+  body.tema-frango .btn-transmitir {
+    background: linear-gradient(135deg, #ff8c1a, #a855f7);
+    border: none;
+    color: #17091f;
+    font-weight: 700;
+  }
+  body.tema-frango #vazio::before {
+    content: "";
+    display: block;
+    width: 130px; height: 130px;
+    margin: 0 auto 14px;
+    background: url('img/frango-vazio.webp') center/contain no-repeat;
+    filter: drop-shadow(0 0 16px rgba(168,85,247,0.4));
+  }
+  body.tema-frango .painel-admin-caixa h2::before {
+    content: "";
+    display: inline-block;
+    width: 30px; height: 32px;
+    background: url('img/frango-emblema.webp') center/contain no-repeat;
+    margin-right: 8px;
+    vertical-align: middle;
+  }
+  body.tema-frango .painel-admin-caixa {
+    background-image: linear-gradient(135deg, var(--panel) 55%, transparent 100%), url('img/frango-hero.webp');
+    background-repeat: no-repeat, no-repeat;
+    background-position: 0 0, top right;
+    background-size: auto, 170px;
+  }
+  body.tema-frango ::selection { background: rgba(255,140,26,0.35); }
+  body.tema-frango .contador-assistindo,
+  body.tema-frango #widget-som-ativo,
+  body.tema-frango #widget-youtube-ativo {
+    box-shadow: 0 0 18px rgba(168,85,247,0.25);
   }
 
   /* ===== SELEÇÃO PARA MULTI-TELA + PIP ===== */
@@ -574,12 +636,6 @@
     color: var(--text-faint);
     min-width: 32px;
     text-align: right;
-  }
-
-  /* Em celulares/tablets (tela sensível ao toque, sem mouse), o volume do
-     próprio aparelho já resolve isso — o slider aqui não ajuda em nada. */
-  @media (hover: none) and (pointer: coarse) {
-    .controle-volume { display: none; }
   }
 
   #vazio {
@@ -1262,7 +1318,7 @@ document.getElementById("btn-camera").addEventListener("click", async () => {
   try {
     // Áudio desligado por padrão: como todo mundo já está na call de voz do
     // Discord, ligar o microfone aqui também ia duplicar o próprio áudio.
-    streamCamera = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "environment" }, audio: false });
+    streamCamera = await navigator.mediaDevices.getUserMedia({ video: { facingMode: "user" }, audio: false });
   } catch (e) {
     if (e.name === "NotAllowedError") {
       alert("Permissão da câmera negada. Você pode liberar o acesso clicando no ícone de câmera/cadeado ao lado do endereço do site.");
@@ -1426,15 +1482,6 @@ function mostrarMonitorRemoto(id, stream) {
       videoEl.srcObject = null;
       videoEl.srcObject = stream;
       videoEl.play().catch(() => {});
-
-      // Se mesmo assim continuar preto depois de mais 3s, a reconexão simples
-      // não resolveu — força a conexão inteira com essa pessoa a se refazer.
-      setTimeout(() => {
-        if (videoEl.videoWidth === 0 && peers[id] && peers[id].restartIce) {
-          console.warn("Vídeo travado com", id, "— forçando reconexão (ICE restart).");
-          peers[id].restartIce();
-        }
-      }, 3000);
     }
   }, 3000);
 
@@ -1797,16 +1844,6 @@ async function garantirUsuarioAnonimo() {
 }
 if (sb) meuUsuarioIdPromise = garantirUsuarioAnonimo();
 
-// Identidade separada, só pra "quem postou esse vídeo do YouTube" — de propósito
-// NÃO usa a conta/login da pessoa, e sim algo único por aba/sessão do navegador.
-// Assim, mesmo logado como admin em 2 aparelhos ao mesmo tempo, cada aparelho
-// conta como "alguém diferente" pra fins de quem pode controlar o vídeo.
-let idSessaoYoutube = sessionStorage.getItem("id_sessao_youtube");
-if (!idSessaoYoutube) {
-  idSessaoYoutube = (crypto.randomUUID ? crypto.randomUUID() : Date.now() + "-" + Math.random());
-  sessionStorage.setItem("id_sessao_youtube", idSessaoYoutube);
-}
-
 // Pequeno "toast" de status dentro do painel — sempre visível, nunca silencioso
 function mostrarStatusAdmin(mensagem, ehErro) {
   let caixa = document.getElementById("status-admin-mensagem");
@@ -1896,11 +1933,6 @@ function aplicarConfigGlobal(cfg) {
 }
 
 carregarConfigGlobalInicial();
-
-// Reforço: além do tempo real, confere direto no banco a cada 15s — se o
-// Realtime perder algum aviso de mudança (acontece de vez em quando), isso
-// garante que ninguém fica preso numa configuração desatualizada por muito tempo.
-setInterval(carregarConfigGlobalInicial, 15000);
 
 if (sb) {
   sb.channel("config-global-realtime")
@@ -2487,7 +2519,7 @@ async function carregarMinhasGravacoes() {
 let playerYoutube = null;
 let youtubeApiPronta = false;
 let souODonoDoVideoAtual = false;
-let ignorarProximoEventoYoutube = false;
+let ignorarEventosYoutubeAte = 0;
 window.onYouTubeIframeAPIReady = () => { youtubeApiPronta = true; };
 
 function extrairYoutubeId(url) {
@@ -2500,7 +2532,9 @@ function tocarVideoYoutubeSincronizado(videoId, comecoEmIso, postadoPorId) {
   document.getElementById("widget-youtube-ativo").classList.add("visivel");
   const segundosDecorridos = Math.max(0, (Date.now() - new Date(comecoEmIso).getTime()) / 1000);
 
-  souODonoDoVideoAtual = idSessaoYoutube === postadoPorId;
+  meuUsuarioIdPromise.then((meuId) => {
+    souODonoDoVideoAtual = !!meuId && meuId === postadoPorId;
+  });
 
   const iniciar = () => {
     if (playerYoutube && playerYoutube.loadVideoById) {
@@ -2533,31 +2567,47 @@ function tocarVideoYoutubeSincronizado(videoId, comecoEmIso, postadoPorId) {
 // Quando EU mexo no player (pausar, dar play, avançar/voltar), propaga isso pros
 // outros — a não ser que quem admin tenha restringido esse controle só a quem
 // colocou o link, e eu não seja essa pessoa.
-// Guarda o último estado combinado (seja por ação local ou por sincronização
-// recebida) — o heartbeat usa ISSO, não uma releitura ao vivo do player, pra
-// nunca correr o risco de pegar um valor "no meio da troca" e desfazer a ação.
-let ultimoEstadoConhecidoYt = null; // "play" | "pause"
-
 function aoMudarEstadoYoutube(e) {
   if (e.data !== YT.PlayerState.PLAYING && e.data !== YT.PlayerState.PAUSED) return;
-  if (ignorarProximoEventoYoutube) { ignorarProximoEventoYoutube = false; return; }
+  if (Date.now() < ignorarEventosYoutubeAte) return;
   const possoControlar = souODonoDoVideoAtual || !configGlobalAtual.restringir_controle_youtube;
   if (!possoControlar) {
     console.log("[YouTube] Não sincronizei essa ação: você não é o dono do vídeo e o admin restringiu o controle.");
     return;
   }
 
-  const estado = e.data === YT.PlayerState.PLAYING ? "play" : "pause";
-  ultimoEstadoConhecidoYt = estado;
-
   sb.rpc("inserir_comando_membro", {
     p_tipo: "sincronizar_youtube",
-    p_payload: { estado, tempo: playerYoutube.getCurrentTime() }
+    p_payload: { estado: e.data === YT.PlayerState.PLAYING ? "play" : "pause", tempo: playerYoutube.getCurrentTime() }
   }).then(({ error }) => {
     if (error) console.error("[YouTube] Erro ao sincronizar:", error.message);
-    else console.log("[YouTube] Sincronização enviada:", estado);
+    else console.log("[YouTube] Sincronização enviada:", e.data === YT.PlayerState.PLAYING ? "play" : "pause");
   });
 }
+
+// "Pular" (arrastar a barra) enquanto o vídeo está PAUSADO não dispara nenhum
+// evento de mudança de estado (o estado continua "pausado" antes e depois) —
+// então isso aqui fica de olho na posição a cada segundo e propaga na mão
+// se detectar um salto que não veio de nós mesmos.
+let ultimoTempoConhecidoYoutube = null;
+setInterval(() => {
+  if (!playerYoutube || !playerYoutube.getCurrentTime || !playerYoutube.getPlayerState) return;
+  if (Date.now() < ignorarEventosYoutubeAte) { ultimoTempoConhecidoYoutube = null; return; }
+  if (playerYoutube.getPlayerState() !== YT.PlayerState.PAUSED) { ultimoTempoConhecidoYoutube = null; return; }
+
+  const tempoAtual = playerYoutube.getCurrentTime();
+  if (ultimoTempoConhecidoYoutube !== null && Math.abs(tempoAtual - ultimoTempoConhecidoYoutube) > 1.5) {
+    const possoControlar = souODonoDoVideoAtual || !configGlobalAtual.restringir_controle_youtube;
+    if (possoControlar) {
+      sb.rpc("inserir_comando_membro", {
+        p_tipo: "sincronizar_youtube",
+        p_payload: { estado: "pause", tempo: tempoAtual }
+      }).then(({ error }) => { if (error) console.error("[YouTube] Erro ao sincronizar salto:", error.message); });
+    }
+  }
+  ultimoTempoConhecidoYoutube = tempoAtual;
+}, 1000);
+
 
 function sincronizarVideoYoutube(payload) {
   if (!playerYoutube || !playerYoutube.getCurrentTime) {
@@ -2565,36 +2615,53 @@ function sincronizarVideoYoutube(payload) {
     return;
   }
   console.log("[YouTube] Sincronizando recebido:", payload);
-  ignorarProximoEventoYoutube = true;
-  ultimoEstadoConhecidoYt = payload.estado; // mesmo se eu for o dono, isso conta como o mais recente
+  // Ignora por uma janela curta (não só o próximo evento) — corrigir a posição
+  // e pausar/dar play pode disparar mais de um evento de estado em sequência.
+  ignorarEventosYoutubeAte = Date.now() + 1200;
   const diferenca = Math.abs(playerYoutube.getCurrentTime() - payload.tempo);
-  if (diferenca > 1.5) playerYoutube.seekTo(payload.tempo, true);
-  if (payload.estado === "play") playerYoutube.playVideo(); else playerYoutube.pauseVideo();
+
+  if (payload.estado === "pause") {
+    // Pausa PRIMEIRO — se corrigirmos a posição antes, o carregamento (buffering)
+    // do seekTo às vezes "ganha" e o vídeo volta a tocar sozinho, exigindo um
+    // segundo clique pra pausar de vez.
+    playerYoutube.pauseVideo();
+    if (diferenca > 1.5) playerYoutube.seekTo(payload.tempo, true);
+  } else {
+    if (diferenca > 1.5) playerYoutube.seekTo(payload.tempo, true);
+    playerYoutube.playVideo();
+  }
 }
 
 function pararVideoYoutube() {
   document.getElementById("widget-youtube-ativo").classList.remove("visivel");
   if (playerYoutube && playerYoutube.stopVideo) playerYoutube.stopVideo();
-  ultimoEstadoConhecidoYt = null;
 }
 
 // O evento onStateChange do YouTube não dispara de forma confiável quando
 // alguém arrasta a barrinha de progresso (só em play/pause). Além disso, se
 // um comando de pausa/play se perder na rede, quem recebeu nunca fica sabendo.
-// Por isso, o dono reafirma o ÚLTIMO ESTADO CONHECIDO periodicamente — nunca
-// relê o player ao vivo aqui, pra não correr risco de pegar um valor no meio
-// de uma troca e desfazer a ação de alguém sem querer.
+// Por isso, quem pode controlar reafirma o estado atual periodicamente —
+// isso corrige tanto "pulos" quanto pausas que às vezes não chegavam.
 setInterval(() => {
-  if (!playerYoutube || !souODonoDoVideoAtual || !ultimoEstadoConhecidoYt) return;
+  if (!playerYoutube || typeof playerYoutube.getPlayerState !== "function") return;
+  // Só o dono do vídeo manda o "heartbeat" de sincronização — se todo mundo
+  // mandasse ao mesmo tempo (quando o controle não é restrito), viraria uma
+  // bagunça de comandos brigando entre si.
+  if (!souODonoDoVideoAtual) return;
+
+  const estadoAtual = playerYoutube.getPlayerState();
+  if (estadoAtual !== YT.PlayerState.PLAYING && estadoAtual !== YT.PlayerState.PAUSED) return;
 
   sb.rpc("inserir_comando_membro", {
     p_tipo: "sincronizar_youtube",
-    p_payload: { estado: ultimoEstadoConhecidoYt, tempo: playerYoutube.getCurrentTime() }
+    p_payload: {
+      estado: estadoAtual === YT.PlayerState.PLAYING ? "play" : "pause",
+      tempo: playerYoutube.getCurrentTime()
+    }
   }).then(({ error }) => {
     if (error) console.error("[YouTube] Erro no heartbeat de sincronização:", error.message);
   });
 }, 3000);
-
 
 document.getElementById("btn-fechar-youtube").addEventListener("click", () => {
   // Fecha só pro navegador de quem clicou — não afeta os outros participantes
@@ -2611,12 +2678,11 @@ async function tocarYoutubeParaTodos(link) {
   const comecoEm = new Date(Date.now() + 1500).toISOString();
   const { error } = await sb.rpc("inserir_comando_membro", {
     p_tipo: "tocar_youtube",
-    p_payload: { videoId, comeco_em: comecoEm, postado_por: idSessaoYoutube }
+    p_payload: { videoId, comeco_em: comecoEm, postado_por: meuId }
   });
   if (error) return { erro: error.message };
 
   // Log separado, só pra admin ver depois quem tocou o quê e quando
-  // (aqui sim usa a identidade "de verdade" da pessoa, só pro histórico)
   await sb.from("historico_youtube").insert({
     link_original: link,
     video_id: videoId,
