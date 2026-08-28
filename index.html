@@ -350,12 +350,33 @@
     vertical-align: middle;
   }
   body.tema-frango .painel-admin-caixa {
-    background-image: linear-gradient(135deg, var(--panel) 55%, transparent 100%), url('img/frango-hero.webp');
+    background-image:
+      radial-gradient(circle at top right, rgba(168,85,247,0.20), transparent 55%),
+      url('img/frango-hero.webp');
     background-repeat: no-repeat, no-repeat;
-    background-position: 0 0, top right;
-    background-size: auto, 170px;
+    background-position: 0 0, top -20px right -20px;
+    background-size: auto, 140px;
   }
   body.tema-frango ::selection { background: rgba(255,140,26,0.35); }
+  body.tema-frango #modal-nome .caixa::before {
+    content: "";
+    display: block;
+    width: 150px; height: 150px;
+    margin: 0 auto 12px;
+    background: url('img/frango-entre.webp') center/contain no-repeat;
+  }
+  body.tema-frango .titulo-zoeira::before,
+  body.tema-frango .titulo-promover::before {
+    content: "";
+    display: inline-block;
+    width: 26px; height: 26px;
+    border-radius: 6px;
+    margin-right: 6px;
+    vertical-align: middle;
+    box-shadow: 0 0 10px rgba(255,140,26,0.5);
+  }
+  body.tema-frango .titulo-zoeira::before { background: url('img/frango-zoeira.webp') center/cover; }
+  body.tema-frango .titulo-promover::before { background: url('img/frango-rei.webp') center/cover; }
   body.tema-frango .contador-assistindo,
   body.tema-frango #widget-som-ativo,
   body.tema-frango #widget-youtube-ativo {
@@ -874,22 +895,23 @@
           <span>Permitir que membros também coloquem vídeos</span>
           <input type="checkbox" id="toggle-youtube-membros">
         </div>
-        <div class="linha-toggle-admin">
-          <span>Só quem colocou o link pode controlar (pausar/avançar)</span>
-          <input type="checkbox" id="toggle-restringir-controle-youtube">
-        </div>
 
         <p class="sub" style="margin:14px 0 6px;">Últimos vídeos tocados</p>
         <div class="lista-historico" id="lista-historico-youtube"></div>
       </div>
 
       <div class="secao-admin">
-        <h3>🎭 Controles de zoeira</h3>
+        <h3 class="titulo-zoeira">🎭 Controles de zoeira</h3>
         <button class="btn-admin-acao" id="btn-parar-tudo">Encerrar todas as transmissões ativas agora</button>
+        <button class="btn-admin-acao" id="btn-confete" style="margin-top:10px;">🎉 Chuva de confete (todos)</button>
+        <div class="linha" style="margin-top:10px;">
+          <input type="text" id="input-nome-holofote" placeholder="Nome de quem vai pro holofote">
+          <button class="btn-admin-acao" id="btn-holofote">🎯 Holofote</button>
+        </div>
       </div>
 
       <div class="secao-admin">
-        <h3>👑 Promover admin</h3>
+        <h3 class="titulo-promover">👑 Promover admin</h3>
         <div class="linha">
           <input type="text" id="input-novo-admin-id" placeholder="ID do Discord da pessoa">
           <input type="text" id="input-novo-admin-nome" placeholder="Nome (opcional)">
@@ -2021,6 +2043,14 @@ function tratarComandoAdmin(cmd) {
     if (streamLocal) pararCompartilhamento();
   }
 
+  if (cmd.tipo === "confete") {
+    dispararConfete();
+  }
+
+  if (cmd.tipo === "holofote") {
+    mostrarHolofote(cmd.payload.nome);
+  }
+
   if (cmd.tipo === "tocar_youtube") {
     tocarVideoYoutubeSincronizado(cmd.payload.videoId, cmd.payload.comeco_em, cmd.payload.postado_por);
   }
@@ -2169,7 +2199,6 @@ async function abrirPainelCompleto() {
   document.getElementById("toggle-permitir-mutar").checked = !!configGlobalAtual.permitir_mutar_sons;
   document.getElementById("toggle-ver-propria-gravacao").checked = !!configGlobalAtual.permitir_ver_propria_gravacao;
   document.getElementById("toggle-youtube-membros").checked = !!configGlobalAtual.permitir_youtube_membros;
-  document.getElementById("toggle-restringir-controle-youtube").checked = !!configGlobalAtual.restringir_controle_youtube;
   atualizarTextoStatusGravacao();
 
   carregarListaSons();
@@ -2240,13 +2269,6 @@ document.getElementById("toggle-youtube-membros").addEventListener("change", asy
   mostrarStatusAdmin(e.target.checked ? "Membros já podem colocar vídeos." : "Só admin pode colocar vídeos agora.", false);
 });
 
-document.getElementById("toggle-restringir-controle-youtube").addEventListener("change", async (e) => {
-  const { error } = await sb.from("configuracoes_globais").update({ restringir_controle_youtube: e.target.checked }).eq("id", 1);
-  if (error) { mostrarStatusAdmin("Erro: " + error.message, true); e.target.checked = !e.target.checked; return; }
-  configGlobalAtual.restringir_controle_youtube = e.target.checked;
-  mostrarStatusAdmin(e.target.checked ? "Só quem postou o link controla o vídeo agora." : "Todo mundo pode controlar o vídeo.", false);
-});
-
 async function carregarHistoricoYoutube() {
   const container = document.getElementById("lista-historico-youtube");
   const { data: videos, error } = await sb.from("historico_youtube")
@@ -2265,6 +2287,19 @@ document.getElementById("btn-parar-tudo").addEventListener("click", async () => 
   const { error } = await sb.from("comandos_admin").insert({ tipo: "parar_transmissoes", payload: {} });
   if (error) { mostrarStatusAdmin("Erro ao encerrar transmissões: " + error.message, true); return; }
   mostrarStatusAdmin("Comando enviado — todas as transmissões ativas serão encerradas.", false);
+});
+
+document.getElementById("btn-confete").addEventListener("click", async () => {
+  const { error } = await sb.from("comandos_admin").insert({ tipo: "confete", payload: {} });
+  if (error) mostrarStatusAdmin("Erro ao mandar confete: " + error.message, true);
+});
+
+document.getElementById("btn-holofote").addEventListener("click", async () => {
+  const nome = document.getElementById("input-nome-holofote").value.trim();
+  if (!nome) return;
+  const { error } = await sb.from("comandos_admin").insert({ tipo: "holofote", payload: { nome } });
+  if (error) { mostrarStatusAdmin("Erro ao mandar holofote: " + error.message, true); return; }
+  document.getElementById("input-nome-holofote").value = "";
 });
 
 document.getElementById("btn-parar-som").addEventListener("click", async () => {
@@ -2564,17 +2599,11 @@ function tocarVideoYoutubeSincronizado(videoId, comecoEmIso, postadoPorId) {
   }
 }
 
-// Quando EU mexo no player (pausar, dar play, avançar/voltar), propaga isso pros
-// outros — a não ser que quem admin tenha restringido esse controle só a quem
-// colocou o link, e eu não seja essa pessoa.
+// Sempre que EU mexo no player (pausar, dar play, avançar/voltar), propaga
+// isso pros outros — qualquer pessoa que estiver assistindo pode controlar.
 function aoMudarEstadoYoutube(e) {
   if (e.data !== YT.PlayerState.PLAYING && e.data !== YT.PlayerState.PAUSED) return;
   if (Date.now() < ignorarEventosYoutubeAte) return;
-  const possoControlar = souODonoDoVideoAtual || !configGlobalAtual.restringir_controle_youtube;
-  if (!possoControlar) {
-    console.log("[YouTube] Não sincronizei essa ação: você não é o dono do vídeo e o admin restringiu o controle.");
-    return;
-  }
 
   sb.rpc("inserir_comando_membro", {
     p_tipo: "sincronizar_youtube",
@@ -2597,13 +2626,10 @@ setInterval(() => {
 
   const tempoAtual = playerYoutube.getCurrentTime();
   if (ultimoTempoConhecidoYoutube !== null && Math.abs(tempoAtual - ultimoTempoConhecidoYoutube) > 1.5) {
-    const possoControlar = souODonoDoVideoAtual || !configGlobalAtual.restringir_controle_youtube;
-    if (possoControlar) {
-      sb.rpc("inserir_comando_membro", {
-        p_tipo: "sincronizar_youtube",
-        p_payload: { estado: "pause", tempo: tempoAtual }
-      }).then(({ error }) => { if (error) console.error("[YouTube] Erro ao sincronizar salto:", error.message); });
-    }
+    sb.rpc("inserir_comando_membro", {
+      p_tipo: "sincronizar_youtube",
+      p_payload: { estado: "pause", tempo: tempoAtual }
+    }).then(({ error }) => { if (error) console.error("[YouTube] Erro ao sincronizar salto:", error.message); });
   }
   ultimoTempoConhecidoYoutube = tempoAtual;
 }, 1000);
@@ -2767,6 +2793,80 @@ async function carregarSoundboardMembros() {
     div.appendChild(btn);
     container.appendChild(div);
   });
+}
+
+// ----- Zoeira: chuva de confete -----
+function dispararConfete() {
+  const cores = ["#ff8c1a", "#a855f7", "#ff4d3d", "#35d68a", "#ffd23f", "#4d9fff"];
+  const container = document.createElement("div");
+  container.style.cssText = "position:fixed; inset:0; pointer-events:none; z-index:400; overflow:hidden;";
+  document.body.appendChild(container);
+
+  for (let i = 0; i < 90; i++) {
+    const pedaco = document.createElement("div");
+    const cor = cores[Math.floor(Math.random() * cores.length)];
+    const esquerda = Math.random() * 100;
+    const atraso = Math.random() * 0.6;
+    const duracao = 2.2 + Math.random() * 1.4;
+    const tamanho = 6 + Math.random() * 6;
+    const giro = Math.random() * 360;
+    pedaco.style.cssText = `
+      position:absolute; top:-20px; left:${esquerda}vw;
+      width:${tamanho}px; height:${tamanho * 0.4}px;
+      background:${cor}; opacity:0.95;
+      transform: rotate(${giro}deg);
+      animation: cair-confete ${duracao}s linear ${atraso}s forwards;
+    `;
+    container.appendChild(pedaco);
+  }
+
+  setTimeout(() => container.remove(), 4500);
+}
+
+// Injeta a animação de queda uma única vez
+if (!document.getElementById("estilo-confete")) {
+  const estilo = document.createElement("style");
+  estilo.id = "estilo-confete";
+  estilo.textContent = `
+    @keyframes cair-confete {
+      0% { transform: translateY(0) rotate(0deg); opacity: 1; }
+      100% { transform: translateY(105vh) rotate(720deg); opacity: 0.3; }
+    }
+    #overlay-holofote {
+      position: fixed; inset: 0; z-index: 400;
+      display: flex; align-items: center; justify-content: center;
+      background: rgba(5,5,8,0.55);
+      opacity: 0; pointer-events: none;
+      transition: opacity 0.3s ease;
+    }
+    #overlay-holofote.ativo { opacity: 1; }
+    #overlay-holofote span {
+      font-family: var(--font-ui);
+      font-size: clamp(32px, 8vw, 96px);
+      font-weight: 800;
+      color: #fff;
+      text-shadow: 0 0 30px var(--tally), 0 0 60px var(--tally);
+      transform: scale(0.7);
+      transition: transform 0.4s cubic-bezier(.34,1.56,.64,1);
+    }
+    #overlay-holofote.ativo span { transform: scale(1); }
+  `;
+  document.head.appendChild(estilo);
+}
+
+// ----- Zoeira: holofote forçado em alguém -----
+function mostrarHolofote(nome) {
+  let overlay = document.getElementById("overlay-holofote");
+  if (!overlay) {
+    overlay = document.createElement("div");
+    overlay.id = "overlay-holofote";
+    overlay.innerHTML = "<span></span>";
+    document.body.appendChild(overlay);
+  }
+  overlay.querySelector("span").textContent = "🎯 " + nome;
+  requestAnimationFrame(() => overlay.classList.add("ativo"));
+  clearTimeout(overlay._timeoutHolofote);
+  overlay._timeoutHolofote = setTimeout(() => overlay.classList.remove("ativo"), 2800);
 }
 </script>
 
