@@ -217,23 +217,6 @@
   .contador-assistindo:hover .lista-espectadores,
   .contador-assistindo.aberto .lista-espectadores { display: block; }
 
-  .aviso-audio {
-    position: absolute; inset: 0;
-    background: rgba(8,9,11,0.72);
-    display: flex; align-items: center; justify-content: center;
-    cursor: pointer;
-  }
-  .aviso-audio span {
-    font-family: var(--font-mono);
-    font-size: 12px;
-    color: var(--text);
-    border: 1px solid var(--line-strong);
-    padding: 8px 16px;
-    border-radius: 3px;
-    background: var(--panel-raised);
-  }
-  .aviso-audio:hover span { border-color: var(--tally); }
-
   .qualidade-sinal {
     width: 7px; height: 7px; border-radius: 50%;
     display: inline-block;
@@ -1108,6 +1091,12 @@ function confirmarNome() {
 function conectarSocket() {
   socket = io(SIGNALING_SERVER_URL);
 
+  // Avisa o servidor imediatamente ao fechar/recarregar a aba, em vez de
+  // depender só do timeout de rede — reduz "espectador fantasma" na contagem.
+  window.addEventListener("beforeunload", () => {
+    if (socket) socket.disconnect();
+  });
+
   socket.on("connect", () => {
     meuSocketId = socket.id;
     document.getElementById("ponto-status").classList.add("online");
@@ -1422,6 +1411,17 @@ function mostrarMonitorRemoto(id, stream) {
   const videoEl = card.querySelector("video");
   videoEl.srcObject = stream;
   videoEl.play().catch(() => {}); // navegador já libera autoplay depois que a pessoa interagiu com a página (nome, botões etc.)
+
+  // Rede de segurança: em calls com 3+ pessoas, às vezes o primeiro frame não
+  // chega por uma renegociação que se sobrepõe. Se depois de 3s o vídeo ainda
+  // não tiver dimensão nenhuma (ou seja, nenhum frame chegou), tenta de novo.
+  setTimeout(() => {
+    if (videoEl.srcObject === stream && videoEl.videoWidth === 0) {
+      videoEl.srcObject = null;
+      videoEl.srcObject = stream;
+      videoEl.play().catch(() => {});
+    }
+  }, 3000);
 
   // Câmera não manda áudio (o microfone fica desligado de propósito), então não faz
   // sentido mostrar um controle de volume que não abaixa/aumenta nada de verdade.
@@ -2486,19 +2486,19 @@ function tocarVideoYoutubeSincronizado(videoId, comecoEmIso, postadoPorId) {
 // outros — a não ser que quem admin tenha restringido esse controle só a quem
 // colocou o link, e eu não seja essa pessoa.
 function aoMudarEstadoYoutube(e) {
+  if (e.data !== YT.PlayerState.PLAYING && e.data !== YT.PlayerState.PAUSED) return;
   if (ignorarProximoEventoYoutube) { ignorarProximoEventoYoutube = false; return; }
   const possoControlar = souODonoDoVideoAtual || !configGlobalAtual.restringir_controle_youtube;
   if (!possoControlar) {
     console.log("[YouTube] Não sincronizei essa ação: você não é o dono do vídeo e o admin restringiu o controle.");
     return;
   }
-  if (e.data !== YT.PlayerState.PLAYING && e.data !== YT.PlayerState.PAUSED) return;
 
-  sb.from("comandos_admin").insert({
-    tipo: "sincronizar_youtube",
-    payload: { estado: e.data === YT.PlayerState.PLAYING ? "play" : "pause", tempo: playerYoutube.getCurrentTime() }
+  sb.rpc("inserir_comando_membro", {
+    p_tipo: "sincronizar_youtube",
+    p_payload: { estado: e.data === YT.PlayerState.PLAYING ? "play" : "pause", tempo: playerYoutube.getCurrentTime() }
   }).then(({ error }) => {
-    if (error) console.error("[YouTube] Erro ao sincronizar (provavelmente RLS/SQL não rodado):", error.message);
+    if (error) console.error("[YouTube] Erro ao sincronizar:", error.message);
     else console.log("[YouTube] Sincronização enviada:", e.data === YT.PlayerState.PLAYING ? "play" : "pause");
   });
 }
@@ -2520,6 +2520,42 @@ function pararVideoYoutube() {
   if (playerYoutube && playerYoutube.stopVideo) playerYoutube.stopVideo();
 }
 
+// O evento onStateChange do YouTube não dispara de forma confiável quando
+// alguém arrasta a barrinha de progresso (só em play/pause). Por isso,
+// checamos periodicamente se o tempo "pulou" mais do que o esperado.
+let ultimoTempoConhecidoYt = null;
+let ultimaChecagemYt = null;
+
+setInterval(() => {
+  if (!playerYoutube || !playerYoutube.getCurrentTime || typeof playerYoutube.getPlayerState !== "function") return;
+  const possoControlar = souODonoDoVideoAtual || !configGlobalAtual.restringir_controle_youtube;
+  if (!possoControlar) return;
+  if (playerYoutube.getPlayerState() !== YT.PlayerState.PLAYING) return;
+
+  const agora = Date.now();
+  const tempoAtual = playerYoutube.getCurrentTime();
+
+  if (ultimoTempoConhecidoYt !== null) {
+    const segundosEsperados = (agora - ultimaChecagemYt) / 1000;
+    const tempoEsperado = ultimoTempoConhecidoYt + segundosEsperados;
+    const diferenca = Math.abs(tempoAtual - tempoEsperado);
+
+    // Diferença grande = alguém arrastou a barra (não é só a variação normal do intervalo)
+    if (diferenca > 2.5) {
+      ignorarProximoEventoYoutube = true;
+      sb.rpc("inserir_comando_membro", {
+        p_tipo: "sincronizar_youtube",
+        p_payload: { estado: "play", tempo: tempoAtual }
+      }).then(({ error }) => {
+        if (error) console.error("[YouTube] Erro ao sincronizar pulo:", error.message);
+      });
+    }
+  }
+
+  ultimoTempoConhecidoYt = tempoAtual;
+  ultimaChecagemYt = agora;
+}, 2000);
+
 document.getElementById("btn-fechar-youtube").addEventListener("click", () => {
   // Fecha só pro navegador de quem clicou — não afeta os outros participantes
   document.getElementById("widget-youtube-ativo").classList.remove("visivel");
@@ -2533,9 +2569,9 @@ async function tocarYoutubeParaTodos(link) {
   const meuId = await meuUsuarioIdPromise;
   // Pequena folga (1.5s) pra dar tempo de todo mundo receber o comando antes do vídeo começar de verdade
   const comecoEm = new Date(Date.now() + 1500).toISOString();
-  const { error } = await sb.from("comandos_admin").insert({
-    tipo: "tocar_youtube",
-    payload: { videoId, comeco_em: comecoEm, postado_por: meuId }
+  const { error } = await sb.rpc("inserir_comando_membro", {
+    p_tipo: "tocar_youtube",
+    p_payload: { videoId, comeco_em: comecoEm, postado_por: meuId }
   });
   if (error) return { erro: error.message };
 
@@ -2615,9 +2651,9 @@ async function carregarSoundboardMembros() {
     btn.textContent = "▶ Tocar pra todos";
     btn.style.cssText = "background:var(--panel-raised);border:1px solid var(--tally);color:var(--tally);padding:4px 10px;border-radius:3px;font-size:11px;cursor:pointer;white-space:nowrap;";
     btn.addEventListener("click", async () => {
-      const { error: erroTocar } = await sb.from("comandos_admin").insert({
-        tipo: "tocar_som",
-        payload: { url: som.arquivo_url, nome: som.nome }
+      const { error: erroTocar } = await sb.rpc("inserir_comando_membro", {
+        p_tipo: "tocar_som",
+        p_payload: { url: som.arquivo_url, nome: som.nome }
       });
       if (erroTocar) alert("Erro ao tocar som: " + erroTocar.message);
     });
