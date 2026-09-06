@@ -147,7 +147,7 @@
   .btn-transmitir { background: var(--tally); border-color: var(--tally); color: #1a0a08; }
   .btn-transmitir:hover { filter: brightness(1.08); }
   .btn-parar { background: transparent; border-color: var(--tally); color: var(--tally); }
-  .btn-link { margin-left: auto; color: var(--text-dim); border-style: dashed; }
+  .btn-link { color: var(--text-dim); border-style: dashed; }
 
   /* ===== GRADE DE MONITORES ===== */
   main { padding: 24px 28px; }
@@ -993,8 +993,10 @@
   <button class="btn" id="btn-camera" style="background:var(--panel-raised); border:1px solid var(--line-strong); color:var(--text);">📷 Mostrar câmera</button>
   <button class="btn" id="btn-virar-camera" style="display:none; background:var(--panel-raised); border:1px solid var(--line-strong); color:var(--text);">🔄 Virar câmera</button>
   <button class="btn btn-parar" id="btn-parar" disabled>■ Encerrar transmissão</button>
-  <button class="btn btn-link" id="btn-copiar">⧉ Copiar link do canal</button>
-  <button class="btn btn-link" id="btn-diagnostico">🩺 Verificar minha conexão</button>
+  <div style="display:flex; gap:10px; margin-left:auto;">
+    <button class="btn btn-link" id="btn-copiar">⧉ Copiar link do canal</button>
+    <button class="btn btn-link" id="btn-diagnostico">🩺 Verificar minha conexão</button>
+  </div>
 </div>
 
 <div id="modal-diagnostico" style="position:fixed; inset:0; background:rgba(8,9,11,0.85); z-index:150; display:none; align-items:flex-start; justify-content:center; overflow-y:auto; padding:40px 20px;">
