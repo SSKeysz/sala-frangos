@@ -1140,6 +1140,18 @@ if (localStorage.getItem(CHAVE_VINHETA)) {
 const CHAVE_NOME = "central_transmissao_nome";
 let meuNome = localStorage.getItem(CHAVE_NOME);
 
+// ID próprio deste navegador, gerado uma única vez e guardado localmente.
+// Usado pra saber "quais gravações são minhas" sem depender da sessão de
+// login (que é compartilhada e só existe de verdade pra acessar o admin).
+const CHAVE_ID_LOCAL = "central_transmissao_id_local";
+let meuIdLocal = localStorage.getItem(CHAVE_ID_LOCAL);
+if (!meuIdLocal) {
+  meuIdLocal = (window.crypto && crypto.randomUUID)
+    ? crypto.randomUUID()
+    : (Date.now().toString(36) + "-" + Math.random().toString(36).slice(2));
+  localStorage.setItem(CHAVE_ID_LOCAL, meuIdLocal);
+}
+
 const modalNome = document.getElementById("modal-nome");
 const inputNome = document.getElementById("input-nome");
 
@@ -1993,7 +2005,7 @@ async function registrarInicioTransmissao() {
   if (!sb) return;
   try {
     const agora = new Date().toISOString();
-    const usuarioId = await meuUsuarioIdPromise;
+    const usuarioId = meuIdLocal;
     const { data, error } = await sb.from("historico_transmissoes").insert({
       sala_id: salaId,
       nome_canal: nomeCanalUrl ? decodeURIComponent(nomeCanalUrl) : salaId,
@@ -2608,11 +2620,7 @@ async function carregarMinhasGravacoes() {
     return;
   }
 
-  const meuId = await meuUsuarioIdPromise;
-  if (!meuId) {
-    container.innerHTML = `<p class="sub" style="color:var(--tally);">Não foi possível identificar este navegador. Recarrega a página e tenta de novo.</p>`;
-    return;
-  }
+  const meuId = meuIdLocal;
 
   const { data: gravacoes, error } = await sb.from("historico_transmissoes")
     .select("*")
