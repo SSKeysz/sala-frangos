@@ -2077,7 +2077,7 @@ async function registrarInicioTransmissao() {
     // no localStorage). A política "usuario baixa a propria gravacao" no
     // Storage compara com auth.uid() — se salvar o ID errado aqui, a pessoa
     // nunca consegue abrir a própria gravação depois (dá "Object not found").
-    const usuarioId = meuUsuarioIdPromise ? await meuUsuarioIdPromise : meuIdLocal;
+    const usuarioId = (meuUsuarioIdPromise ? await meuUsuarioIdPromise : null) || meuIdLocal;
     const { data, error } = await sb.from("historico_transmissoes").insert({
       sala_id: salaId,
       nome_canal: nomeCanalUrl ? decodeURIComponent(nomeCanalUrl) : salaId,
@@ -2767,7 +2767,7 @@ async function carregarMinhasGravacoes() {
     return;
   }
 
-  const meuId = meuUsuarioIdPromise ? await meuUsuarioIdPromise : meuIdLocal;
+  const meuId = (meuUsuarioIdPromise ? await meuUsuarioIdPromise : null) || meuIdLocal;
 
   const { data: gravacoes, error } = await sb.from("historico_transmissoes")
     .select("*")
