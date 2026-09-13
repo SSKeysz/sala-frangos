@@ -1024,7 +1024,6 @@
       <option value="30" selected>30 fps</option>
       <option value="60">60 fps</option>
       <option value="120">120 fps</option>
-      <option value="240">240 fps</option>
     </select>
   </div>
 </div>
@@ -1048,6 +1047,10 @@
 <script>
 // ======= CONFIGURAÇÃO =======
 const SIGNALING_SERVER_URL = "https://sinalizacao-frangos.onrender.com";
+// Depois de quantos dias uma gravação (clipe) é apagada automaticamente do
+// armazenamento pra não lotar o banco. O registro no histórico continua
+// existindo (nome/data/duração), só o vídeo em si é removido.
+const RETENCAO_GRAVACOES_DIAS = 3;
 // ============================
 
 const params = new URLSearchParams(window.location.search);
@@ -1181,6 +1184,57 @@ const configIce = {
   ]
 };
 
+// ===== Qualidade de vídeo real (bitrate/encoding) =====
+// Sem isso, quem entra em WebRTC "cru" fica na mão do ajuste automático do
+// navegador, que prioriza não travar em vez de manter nitidez/fps — é por
+// isso que escolher 120fps não estava mudando a sensação de fluidez: o
+// pedido de frameRate ideal ia pro getDisplayMedia, mas nada dizia pro
+// encoder "pode gastar banda suficiente pra isso". Aqui a gente define um
+// teto de bitrate de verdade compatível com a resolução+fps escolhidos.
+function calcularBitrateAlvo(resolucaoAlvo, fpsAlvo) {
+  // bits por segundo — pensado pra conteúdo de tela/texto (mais pesado que
+  // vídeo de câmera comum, que tem menos detalhe fino pra codificar)
+  const tabela = {
+    576:  { 30: 1500000, 60: 2200000, 120: 3000000 },
+    720:  { 30: 2500000, 60: 3800000, 120: 5000000 },
+    1080: { 30: 4000000, 60: 6000000, 120: 8000000 },
+    1440: { 30: 6000000, 60: 9000000, 120: 12000000 }
+  };
+  const porResolucao = tabela[resolucaoAlvo] || tabela[1080];
+  return porResolucao[fpsAlvo] || porResolucao[30];
+}
+
+// Como a conexão é "malha" (quem transmite manda uma cópia direta pra cada
+// espectador — ver observação mais abaixo em criarConexao), a banda de
+// upload de quem transmite é dividida entre todo mundo assistindo. Isso NÃO
+// resolve o limite de fundo (pra isso precisaria de um servidor de mídia
+// central, tipo SFU), mas evita que o navegador demore pra perceber o
+// congestionamento e engasgue enquanto "descobre" isso sozinho.
+function aplicarQualidadeEmTodosPeers() {
+  if (!streamLocal) return;
+  const resolucaoAlvo = parseInt(document.getElementById("sel-resolucao").value, 10) || 1080;
+  const fpsAlvo = parseInt(document.getElementById("sel-fps").value, 10) || 30;
+  const bitrateBase = calcularBitrateAlvo(resolucaoAlvo, fpsAlvo);
+  const quantidadePeers = Math.max(Object.keys(peers).length, 1);
+  // Só começa a reduzir o teto por espectador a partir do 4º — com poucos
+  // espectadores não faz sentido punir a qualidade de ninguém.
+  const fator = quantidadePeers <= 3 ? 1 : 3 / quantidadePeers;
+  const bitrateFinal = Math.max(Math.round(bitrateBase * fator), 400000);
+
+  Object.values(peers).forEach((pc) => {
+    const sender = pc.getSenders().find((s) => s.track && s.track.kind === "video");
+    if (!sender) return;
+    const parametros = sender.getParameters();
+    if (!parametros.encodings || parametros.encodings.length === 0) parametros.encodings = [{}];
+    parametros.encodings[0].maxBitrate = bitrateFinal;
+    parametros.encodings[0].maxFramerate = fpsAlvo;
+    // Tela/texto (fps baixo) pede nitidez; fps alto pede fluidez de verdade —
+    // por isso a prioridade do encoder muda conforme o modo escolhido.
+    parametros.degradationPreference = fpsAlvo >= 60 ? "maintain-framerate" : "maintain-resolution";
+    sender.setParameters(parametros).catch((e) => console.warn("Não consegui aplicar qualidade de vídeo:", e.message));
+  });
+}
+
 function iniciarComNome(nome) {
   meuNome = nome;
   localStorage.setItem(CHAVE_NOME, nome);
@@ -1295,6 +1349,7 @@ function conectarSocket() {
     delete nomesRemotos[id];
     removerMonitor(id);
     atualizarContadoresAssistindo();
+    aplicarQualidadeEmTodosPeers();
   });
 
   socket.on("parou-de-compartilhar", (id) => {
@@ -1312,6 +1367,9 @@ function criarConexao(idRemoto) {
 
   if (streamLocal) {
     streamLocal.getTracks().forEach((track) => pc.addTrack(track, streamLocal));
+    // Espectador novo entrando durante uma transmissão em andamento — aplica
+    // o mesmo teto de qualidade nele e reajusta a divisão de banda com todo mundo.
+    aplicarQualidadeEmTodosPeers();
   }
 
   pc.onicecandidate = (evento) => {
@@ -1449,6 +1507,7 @@ async function iniciarTransmissaoComStream(stream) {
   Object.values(peers).forEach((pc) => {
     stream.getTracks().forEach((track) => pc.addTrack(track, stream));
   });
+  aplicarQualidadeEmTodosPeers();
 
   document.getElementById("btn-compartilhar").disabled = true;
   document.getElementById("btn-camera").disabled = true;
@@ -1887,6 +1946,11 @@ document.getElementById("btn-diagnostico").addEventListener("click", async () =>
   checagens.push({ nome: "Compartilhar tela suportado", ok: !!navigator.mediaDevices?.getDisplayMedia });
   checagens.push({ nome: "Câmera/microfone suportado", ok: !!navigator.mediaDevices?.getUserMedia });
   checagens.push({ nome: "Conexão direta (WebRTC) suportada", ok: !!window.RTCPeerConnection });
+  checagens.push({
+    nome: "Servidor TURN configurado (rede fechada)",
+    ok: !!TURN_USERNAME,
+    aviso: !TURN_USERNAME ? "Sem isso, gente em wifi de empresa/faculdade ou algumas redes de celular pode nunca conseguir ver a transmissão. Preencha TURN_USERNAME/TURN_CREDENTIAL no código." : null
+  });
   checagens.push({ nome: "Gravação de vídeo suportada", ok: !!window.MediaRecorder });
 
   // 4. Permissão de câmera (se o navegador souber informar)
@@ -1899,7 +1963,10 @@ document.getElementById("btn-diagnostico").addEventListener("click", async () =>
 
   container.innerHTML = checagens.map((c) => {
     const icone = c.ok ? "✅" : (c.aviso ? "⚠️" : "❌");
-    return `<div>${icone} ${escapeHtml(c.nome)}</div>`;
+    const textoAviso = (!c.ok && typeof c.aviso === "string" && c.aviso)
+      ? `<div style="color:var(--text-dim); font-size:11px; margin:2px 0 6px 22px;">${escapeHtml(c.aviso)}</div>`
+      : "";
+    return `<div>${icone} ${escapeHtml(c.nome)}</div>${textoAviso}`;
   }).join("");
 
   const tudoOk = checagens.every((c) => c.ok);
@@ -2313,8 +2380,79 @@ async function abrirPainelCompleto() {
   atualizarTextoStatusGravacao();
 
   carregarListaSons();
-  carregarHistorico();
+  // Limpeza "melhor esforço": some sempre que um admin abrir o painel. Não
+  // substitui uma rotina automática no servidor (ver README_LIMPEZA_GRAVACOES.md),
+  // mas já evita acumular vídeo antigo enquanto isso não é configurado.
+  limparGravacoesExpiradas().finally(() => {
+    carregarHistorico();
+  });
   carregarHistoricoYoutube();
+}
+
+// ===== Limpeza automática de clipes antigos =====
+// Calcula quanto tempo falta (ou já passou) pro limite de retenção, pra
+// mostrar na lista. Retorna { texto, urgente, expirado }.
+function calcularTempoRestanteGravacao(iniciadoEmIso) {
+  const prazoMs = RETENCAO_GRAVACOES_DIAS * 24 * 60 * 60 * 1000;
+  const expiraEm = new Date(iniciadoEmIso).getTime() + prazoMs;
+  const restanteMs = expiraEm - Date.now();
+
+  if (restanteMs <= 0) return { texto: "apagando em breve", urgente: true, expirado: true };
+
+  const horas = restanteMs / (1000 * 60 * 60);
+  if (horas < 1) return { texto: `expira em ${Math.max(Math.round(restanteMs / 60000), 1)}min`, urgente: true, expirado: false };
+  if (horas < 24) return { texto: `expira em ${Math.round(horas)}h`, urgente: horas < 6, expirado: false };
+
+  const dias = Math.floor(horas / 24);
+  const horasRestantes = Math.round(horas % 24);
+  return { texto: `expira em ${dias}d ${horasRestantes}h`, urgente: false, expirado: false };
+}
+
+function criarBadgeTempoRestante(iniciadoEmIso) {
+  const info = calcularTempoRestanteGravacao(iniciadoEmIso);
+  const span = document.createElement("span");
+  span.textContent = "⏳ " + info.texto;
+  span.style.cssText = `font-size:10px; white-space:nowrap; color:${info.urgente ? "var(--tally)" : "var(--text-faint)"};`;
+  span.title = `Clipes são apagados automaticamente após ${RETENCAO_GRAVACOES_DIAS} dias pra não lotar o armazenamento.`;
+  return span;
+}
+
+// Apaga do armazenamento (bucket "gravacoes") e desvincula do histórico
+// qualquer clipe mais velho que RETENCAO_GRAVACOES_DIAS. O registro de
+// histórico em si (nome/data/duração) continua existindo — só o vídeo some.
+// IMPORTANTE: isso só roda quando um admin tem o painel aberto. Pra rodar
+// sozinho todo dia mesmo sem ninguém abrir o site, veja
+// README_LIMPEZA_GRAVACOES.md (Edge Function + agendamento no Supabase).
+let limpezaGravacoesEmAndamento = false;
+async function limparGravacoesExpiradas() {
+  if (!sb || limpezaGravacoesEmAndamento) return;
+  limpezaGravacoesEmAndamento = true;
+  try {
+    const limiteIso = new Date(Date.now() - RETENCAO_GRAVACOES_DIAS * 24 * 60 * 60 * 1000).toISOString();
+    const { data: expiradas, error } = await sb.from("historico_transmissoes")
+      .select("id, gravacao_url")
+      .not("gravacao_url", "is", null)
+      .lt("iniciado_em", limiteIso);
+
+    if (error) { console.error("Erro ao buscar gravações expiradas:", error.message); return; }
+    if (!expiradas || expiradas.length === 0) return;
+
+    for (const item of expiradas) {
+      const { error: erroRemover } = await sb.storage.from("gravacoes").remove([item.gravacao_url]);
+      if (erroRemover) {
+        console.warn("Não consegui apagar do armazenamento", item.gravacao_url, erroRemover.message);
+        continue; // não desvincula no banco se o arquivo não foi apagado de verdade
+      }
+      const { error: erroUpdate } = await sb.from("historico_transmissoes")
+        .update({ gravacao_url: null }).eq("id", item.id);
+      if (erroUpdate) console.warn("Apaguei o arquivo mas não consegui atualizar o histórico:", erroUpdate.message);
+    }
+    console.log(`Limpeza de clipes: ${expiradas.length} gravação(ões) com mais de ${RETENCAO_GRAVACOES_DIAS} dias removida(s).`);
+  } catch (e) {
+    console.error("Erro inesperado na limpeza de gravações:", e);
+  } finally {
+    limpezaGravacoesEmAndamento = false;
+  }
 }
 
 function atualizarTextoStatusGravacao() {
@@ -2568,9 +2706,13 @@ async function carregarHistorico() {
     div.style.alignItems = "center";
     div.style.gap = "8px";
 
+    const grupoTexto = document.createElement("div");
+    grupoTexto.style.cssText = "display:flex; flex-direction:column; gap:2px; min-width:0;";
     const texto = document.createElement("span");
     texto.textContent = `${item.nome_exibido} — ${item.nome_canal || item.sala_id} — ${dataFormatada} — ${duracaoTexto}`;
-    div.appendChild(texto);
+    grupoTexto.appendChild(texto);
+    if (item.gravacao_url) grupoTexto.appendChild(criarBadgeTempoRestante(item.iniciado_em));
+    div.appendChild(grupoTexto);
 
     if (item.gravacao_url) {
       const btnVer = document.createElement("button");
@@ -2649,9 +2791,13 @@ async function carregarMinhasGravacoes() {
     div.className = "item";
     div.style.cssText = "display:flex; justify-content:space-between; align-items:center; gap:8px;";
 
+    const grupoTexto = document.createElement("div");
+    grupoTexto.style.cssText = "display:flex; flex-direction:column; gap:2px; min-width:0;";
     const texto = document.createElement("span");
     texto.textContent = `${item.nome_canal || item.sala_id} — ${dataFormatada} — ${duracaoTexto}`;
-    div.appendChild(texto);
+    grupoTexto.appendChild(texto);
+    grupoTexto.appendChild(criarBadgeTempoRestante(item.iniciado_em));
+    div.appendChild(grupoTexto);
 
     const btnVer = document.createElement("button");
     btnVer.textContent = "▶ Assistir";
